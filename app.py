@@ -47,6 +47,7 @@ from utils.betting_sandbox import (
     lambdas_from_form, kalman_1d,
 )
 from utils.pdf_export import export_team_pdf
+from utils.scorecard import render_score_card, format_score_pair, format_score
 from utils.ws_feeds import probe_websocket, sports_ws_candidates, get_owner_ws, merge_ws_payload_into_games, live_score_tick
 from utils.viz3d import form_3d_scatter, poisson_surface
 from utils.errors import safe_call, format_feed_status
@@ -301,33 +302,7 @@ with tabs[0]:
             detail = g.get("detail") or ""
             if str(detail).startswith("http"):
                 st.markdown(f"**[{g.get('name') or 'Scores'}]({detail})**")
-            away_s = g.get("away_score", "–")
-            home_s = g.get("home_score", "–")
-            try:
-                if away_s not in (None, "–", ""):
-                    away_s = str(int(float(away_s)))
-            except Exception:
-                away_s = str(away_s)
-            try:
-                if home_s not in (None, "–", ""):
-                    home_s = str(int(float(home_s)))
-            except Exception:
-                home_s = str(home_s)
-            away_n = str(g.get("away_team") or "Away")
-            home_n = str(g.get("home_team") or "Home")
-            st.markdown(
-                f'<div class="sbsby-card">'
-                f'<div class="score-card">'
-                f'<div class="team-block"><div class="score">{away_s}</div>'
-                f'<div class="name">{away_n}</div></div>'
-                f'<div style="text-align:center"><div class="vs-pill">VS</div>'
-                f'<div class="{badge}">{status}</div></div>'
-                f'<div class="team-block"><div class="score">{home_s}</div>'
-                f'<div class="name">{home_n}</div></div>'
-                f'</div>'
-                f'<div class="source-badge">{meta}</div></div>',
-                unsafe_allow_html=True,
-            )
+            st.markdown(render_score_card(g), unsafe_allow_html=True)
         src_note(src)
     except Exception as e:
         st.error("Scores unavailable after failover.")
@@ -712,7 +687,7 @@ with tabs[7]:
             matchup = g.get("name") or f"{g.get('away_team','')} @ {g.get('home_team','')}"
             venue = g.get("venue") or ""
             status = g.get("status") or g.get("detail") or ""
-            score = f"{g.get('away_score','–')}–{g.get('home_score','–')}"
+            score = format_score_pair(g.get("away_score"), g.get("home_score"))
             if str(detail).startswith("http") or (g.get("source") in ("local-program", "maxpreps", "search") and str(detail).startswith("http")):
                 st.markdown(f"**[{matchup}]({detail})**" + (f" · {when}" if when else ""))
             else:

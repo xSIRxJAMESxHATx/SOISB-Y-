@@ -332,23 +332,12 @@ GENERIC_MATCH_BLOCKLIST = {
 
 
 def team_match_tokens(team: dict) -> list:
-    """Distinctive tokens for name matching — never generic sport words."""
-    tokens = []
-    for k in ("search_name", "odds_team", "short", "name", "mascot"):
-        v = (team.get(k) or "").lower().strip()
-        if not v:
-            continue
-        if v not in tokens and v not in GENERIC_MATCH_BLOCKLIST and len(v) > 2:
-            tokens.append(v)
-        for part in v.replace("-", " ").replace("/", " ").split():
-            if (
-                part
-                and len(part) > 2
-                and part not in GENERIC_MATCH_BLOCKLIST
-                and part not in tokens
-            ):
-                tokens.append(part)
-    return tokens
+    """Delegate to utils.team_match for a single source of truth."""
+    try:
+        from .team_match import match_tokens
+        return match_tokens(team)
+    except Exception:
+        return []
 
 
 def _safe_get(d: Any, *keys, default=None):
@@ -498,7 +487,14 @@ def local_program_rows(team_key: str, kind: str = "schedule") -> List[dict]:
     return rows
 
 
+# Caching strategy
+# - Memory dict with per-key TTL (live scores short, schedule/standings longer)
+# - Disk JSON under .data/http_cache for cross-rerun reuse
+# - Empty score/schedule results get short negative TTL only
+# - clear_cache() wipes memory + disk
+
 class SportsAPIClient:
+
     """Multi-source client: memory + disk cache, exponential backoff, throttle."""
 
     def __init__(self, timeout: float = 7.0, cache_ttl: float = 45.0):

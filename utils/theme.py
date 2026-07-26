@@ -79,49 +79,88 @@ def build_css(team_key: str, dark: bool = False) -> str:
         box-shadow: {shadow};
     }}
     .score-card {{
-        display: flex;
+        display: grid;
+        grid-template-columns: 1fr auto 1fr;
         align-items: center;
-        justify-content: space-between;
-        gap: 0.75rem;
-        flex-wrap: wrap;
+        gap: 0.5rem 0.75rem;
+        width: 100%;
+        max-width: 100%;
+        overflow: hidden;
+        box-sizing: border-box;
     }}
     .team-block {{
         display: flex;
         flex-direction: column;
         align-items: center;
-        min-width: 100px;
-        flex: 1;
+        justify-content: center;
+        min-width: 0;
+        max-width: 100%;
+        overflow: hidden;
+    }}
+    .team-block .logo {{
+        width: 36px;
+        height: 36px;
+        object-fit: contain;
+        margin-bottom: 0.25rem;
+        border-radius: 6px;
     }}
     .team-block .name {{
         font-weight: 600;
-        font-size: 0.9rem;
-        margin-top: 0.3rem;
+        font-size: 0.82rem;
+        margin-top: 0.2rem;
         text-align: center;
+        line-height: 1.2;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: inherit;
     }}
     .team-block .score {{
-        font-size: 1.85rem;
+        font-size: clamp(1.35rem, 4vw, 1.85rem);
         font-weight: 800;
-        font-family: 'JetBrains Mono', monospace;
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
         color: {primary};
+        line-height: 1.1;
+        letter-spacing: -0.02em;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }}
+    .score-mid {{
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        min-width: 4.5rem;
+        max-width: 7rem;
+        padding: 0 0.25rem;
     }}
     .vs-pill {{
         background: {primary}22;
         color: {primary};
         border: 1px solid {primary}44;
         border-radius: 999px;
-        padding: 0.3rem 0.75rem;
+        padding: 0.25rem 0.65rem;
         font-weight: 700;
-        font-size: 0.75rem;
+        font-size: 0.7rem;
+        letter-spacing: 0.06em;
     }}
     .status-badge {{
         display: inline-block;
         background: {secondary}33;
         color: {secondary};
         border-radius: 8px;
-        padding: 0.2rem 0.5rem;
-        font-size: 0.72rem;
+        padding: 0.18rem 0.45rem;
+        font-size: 0.68rem;
         font-weight: 600;
         margin-top: 0.35rem;
+        max-width: 100%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        text-align: center;
     }}
     .status-badge.live {{
         background: #e11d4833;
@@ -209,6 +248,14 @@ def build_css(team_key: str, dark: bool = False) -> str:
         border: none !important;
         border-radius: 10px !important;
         font-weight: 600 !important;
+    }}
+    .score-meta {{
+        margin-top: 0.55rem;
+        font-size: 0.68rem;
+        color: {muted};
+        text-align: center;
+        line-height: 1.35;
+        word-break: break-word;
     }}
     .source-badge {{
         font-size: 0.68rem;
@@ -298,7 +345,9 @@ def build_css(team_key: str, dark: bool = False) -> str:
     }}
     @media (max-width: 640px) {{
         .sbsby-banner h1 {{ font-size: 1.2rem !important; }}
-        .team-block .score {{ font-size: 1.35rem !important; }}
+        .team-block .score {{ font-size: 1.25rem !important; }}
+        .score-card {{ gap: 0.35rem; }}
+        .team-block .name {{ font-size: 0.72rem !important; }}
         .bb-card .bb-photo {{ width: 100%; }}
     }}
     </style>
