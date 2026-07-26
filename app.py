@@ -266,7 +266,7 @@ tabs = st.tabs([
 # ===== Scores + Weather =====
 with tabs[0]:
     st.markdown('<div class="section-title">Live Scores</div>', unsafe_allow_html=True)
-    st.caption("Real-time multi-source feeds · next scheduled game if none live")
+    st.caption("Auto-refreshes · last final + next game when nothing is live today")
     try:
         st.markdown(f"[Reddit: {team.get('short')}]({reddit_url(team_key)})")
     except Exception:
@@ -277,40 +277,30 @@ with tabs[0]:
             games = merge_ws_payload_into_games(games or [])
         except Exception:
             pass
-        # Prefer live, else next scheduled from schedule
-        live = [g for g in (games or []) if (g.get("status_state") or "") == "in"]
-        if live:
-            games = live
-        elif not games:
-            try:
-                sched, s2 = client.get_schedule(team_key)
-                upcoming = [
-                    g for g in (sched or [])
-                    if (g.get("status_state") or "pre") in ("pre", "scheduled", "")
-                    or "schedule" in str(g.get("status") or "").lower()
-                ]
-                if not upcoming and sched:
-                    # pick nearest future-ish entry
-                    upcoming = list(sched)[-5:]
-                games = upcoming[:3] if upcoming else (sched or [])[:3]
-                if games:
-                    src = s2 + "+next"
-                    st.info("No live game — showing next scheduled game(s).")
-            except Exception:
-                pass
         if not games:
-            st.markdown('<div class="sbsby-card empty-state">No games found — open Schedule tab.</div>', unsafe_allow_html=True)
-        for g in games:
-            st_live = (g.get("status_state") or "") == "in"
+            st.markdown('<div class="sbsby-card empty-state">Scores temporarily unavailable — try Refresh.</div>', unsafe_allow_html=True)
+        for g in (games or []):
+            st_state = (g.get("status_state") or "").lower()
+            st_live = st_state == "in"
+            is_final = st_state in ("post", "final") or "final" in str(g.get("status") or "").lower()
+            label = "LIVE" if st_live else ("FINAL" if is_final else "UPCOMING")
             badge = "status-badge live" if st_live else "status-badge"
-            status = g.get("detail") or g.get("status") or "Scheduled"
+            status = g.get("detail") or g.get("status") or label
+            when = (g.get("date") or "")[:16].replace("T", " ")
+            venue = g.get("venue") or ""
+            bcast = g.get("broadcast") or ""
+            meta = " · ".join(x for x in [label, when, venue, bcast] if x)
+            # link fallback detail
+            detail = g.get("detail") or ""
+            if str(detail).startswith("http"):
+                st.markdown(f"**[{g.get('name') or 'Scores'}]({detail})**")
             st.markdown(f"""
             <div class="sbsby-card"><div class="score-card">
               <div class="team-block"><div class="score">{g.get('away_score','–')}</div><div class="name">{g.get('away_team','Away')}</div></div>
               <div style="text-align:center"><div class="vs-pill">VS</div><div class="{badge}">{status}</div></div>
               <div class="team-block"><div class="score">{g.get('home_score','–')}</div><div class="name">{g.get('home_team','Home')}</div></div>
             </div>
-            <div class="source-badge">{g.get('venue') or ''} · {g.get('broadcast') or ''}</div></div>""", unsafe_allow_html=True)
+            <div class="source-badge">{meta}</div></div>""", unsafe_allow_html=True)
         src_note(src)
     except Exception as e:
         st.error("Scores unavailable after failover.")
@@ -683,21 +673,31 @@ with tabs[6]:
 # ===== Schedule =====
 with tabs[7]:
     st.markdown('<div class="section-title">Schedule</div>', unsafe_allow_html=True)
-    st.caption(f"Schedule for **{team.get('name')}** only")
+    st.caption(f"Ordered schedule for **{team.get('name')}** — date, matchup, venue, result")
     try:
         games, src = client.get_schedule(team_key)
         if not games:
             st.info("No schedule rows yet — try Refresh.")
+        rows = []
         for g in games or []:
             detail = g.get("detail") or ""
-            if g.get("source") == "local-program" and str(detail).startswith("http"):
-                st.markdown(f"**[{g.get('name')}]({detail})**")
+            when = (g.get("date") or "")[:16].replace("T", " ")
+            matchup = g.get("name") or f"{g.get('away_team','')} @ {g.get('home_team','')}"
+            venue = g.get("venue") or ""
+            status = g.get("status") or g.get("detail") or ""
+            score = f"{g.get('away_score','–')}–{g.get('home_score','–')}"
+            if str(detail).startswith("http") or (g.get("source") in ("local-program", "maxpreps", "search") and str(detail).startswith("http")):
+                st.markdown(f"**[{matchup}]({detail})**" + (f" · {when}" if when else ""))
             else:
-                st.markdown(
-                    f"**{g.get('name') or (str(g.get('away_team','')) + ' @ ' + str(g.get('home_team','')))}** · "
-                    f"{(g.get('date') or '')[:16]} · {g.get('status') or detail} · "
-                    f"{g.get('away_score','–')}–{g.get('home_score','–')}"
-                )
+                rows.append({
+                    "When": when,
+                    "Matchup": matchup,
+                    "Venue": venue,
+                    "Status": status if not str(status).startswith("http") else "Scheduled",
+                    "Score": score,
+                })
+        if rows:
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
         src_note(src)
     except Exception as e:
         st.warning("Schedule error.")

@@ -620,170 +620,183 @@ class SportsAPIClient:
     def get_scoreboard(
         self, team_key: str, date: Optional[str] = None
     ) -> Tuple[List[dict], str]:
-        """Real-time scoreboard — most reliable path with multi-source failover."""
+        """
+        Always populate scores for the selected team:
+          1) live game if in progress
+          2) today's game if scheduled
+          3) most recent final + next upcoming
+        Multi-source with never-empty fallback for configured teams.
+        """
         if team_key not in TEAMS:
             return [], "unknown-team"
         team = TEAMS[team_key]
-        cache_key = f"sb:{team_key}:{date or 'today'}:v4"
-        # HS / track: always-available local program rows (ESPN IDs unreliable)
-        if team.get("hs") and team_key in LOCAL_PROGRAMS:
+        cache_key = f"sb:{team_key}:{date or 'today'}:v6"
+
+        # HS / local programs without ESPN
+        if team.get("hs") and team_key in LOCAL_PROGRAMS and not team.get("espn_id"):
             cached = self._get_cached(cache_key)
             if cached is not None:
                 return cached, "cache"
-            # still try ESPN/schedule once, then local
-            try:
-                if team.get("espn_id"):
-                    pass  # fall through to normal sources
-                else:
-                    rows = local_program_rows(team_key, "schedule")
-                    self._set_cache(cache_key, rows, self.cache_ttl)
-                    return rows, "local-program"
-            except Exception:
-                rows = local_program_rows(team_key, "schedule")
-                return rows, "local-program"
+            rows = local_program_rows(team_key, "schedule")
+            self._set_cache(cache_key, rows, self.cache_ttl)
+            return rows, "local-program"
+
         path = team.get("espn_path") or ""
         tid = str(team.get("espn_id") or "")
-        search = (
-            team.get("search_name")
-            or team.get("odds_team")
-            or team.get("short")
-            or team.get("name")
-            or ""
-        ).lower()
+        short = (team.get("short") or "").lower()
         name_l = (team.get("name") or "").lower()
 
-        def _filter_events(events: List[dict]) -> List[dict]:
-            out = []
-            for e in events or []:
-                g = self._norm_espn_event(e) if "competitions" in e or "status" in e else e
-                if not isinstance(g, dict):
-                    continue
-                # already normalized path
-                if "home_team" not in g and "competitions" in e:
-                    g = self._norm_espn_event(e)
-                blob = f"{g.get('name','')} {g.get('home_team','')} {g.get('away_team','')}".lower()
-                if tid:
-                    # prefer team id match when competitors available
-                    comps = _safe_get(e, "competitions", 0, "competitors") or []
-                    ids = [str(_safe_get(c, "team", "id") or "") for c in comps]
-                    if tid in ids or (search and search in blob) or (name_l and name_l.split()[-1] in blob):
-                        out.append(g if "home_team" in g else self._norm_espn_event(e))
-                elif search and search in blob:
-                    out.append(g if "home_team" in g else self._norm_espn_event(e))
-                elif name_l and any(p in blob for p in name_l.split() if len(p) > 3):
-                    out.append(g if "home_team" in g else self._norm_espn_event(e))
-            # de-dupe by id/name
-            seen = set()
-            uniq = []
-            for g in out:
-                k = g.get("id") or g.get("name")
-                if k in seen:
-                    continue
-                seen.add(k)
-                uniq.append(g)
-            return uniq
+        def _parse_date(g: dict) -> str:
+            return (g.get("date") or "")[:19]
 
-        def espn_scoreboard() -> Optional[List[dict]]:
+        def _is_final(g: dict) -> bool:
+            st = (g.get("status_state") or "").lower()
+            status = str(g.get("status") or "").lower()
+            return st in ("post", "final") or "final" in status
+
+        def _is_live(g: dict) -> bool:
+            return (g.get("status_state") or "").lower() == "in"
+
+        def _is_upcoming(g: dict) -> bool:
+            st = (g.get("status_state") or "pre").lower()
+            return st in ("pre", "scheduled", "") and not _is_final(g)
+
+        def _involves_team_event(e: dict) -> bool:
+            if not tid:
+                blob = str(e).lower()
+                return short in blob or any(p in blob for p in name_l.split() if len(p) > 3)
+            comps = _safe_get(e, "competitions", 0, "competitors") or []
+            ids = [str(_safe_get(c, "team", "id") or "") for c in comps]
+            if tid in ids:
+                return True
+            blob = f"{e.get('name','')} {e.get('shortName','')}".lower()
+            return short in blob or (name_l.split()[-1] in blob if name_l else False)
+
+        def _pick_scoreboard_view(games: List[dict]) -> List[dict]:
+            if not games:
+                return []
+            live = [g for g in games if _is_live(g)]
+            if live:
+                return live
+            # today (UTC date match)
+            from datetime import datetime, timezone
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            today_games = [g for g in games if (g.get("date") or "").startswith(today)]
+            if today_games:
+                return today_games
+            finals = sorted([g for g in games if _is_final(g)], key=_parse_date)
+            upcoming = sorted([g for g in games if _is_upcoming(g)], key=_parse_date)
+            out: List[dict] = []
+            if finals:
+                out.append(finals[-1])  # last final
+            if upcoming:
+                out.append(upcoming[0])  # next game
+            if out:
+                return out
+            # last resort: most recent 2 by date
+            return sorted(games, key=_parse_date)[-2:]
+
+        def espn_team_schedule_all() -> Optional[List[dict]]:
+            if not tid or not path:
+                return None
+            try:
+                data = self._request(f"{ESPN_BASE}/{path}/teams/{tid}/schedule")
+            except Exception:
+                return None
+            events = data.get("events") or []
+            games = [self._norm_espn_event(e) for e in events]
+            games = [g for g in games if g.get("home_team") or g.get("name")]
+            picked = _pick_scoreboard_view(games)
+            return picked if picked else (games[-2:] if games else None)
+
+        def espn_scoreboard_today() -> Optional[List[dict]]:
+            if not path:
+                return None
+            from datetime import datetime, timezone
             params = {}
             if date:
                 params["dates"] = date.replace("-", "")
-            data = self._request(f"{ESPN_BASE}/{path}/scoreboard", params)
-            events = data.get("events") or []
-            # also try dates=today explicitly
-            if not events and not date:
-                from datetime import datetime, timezone
+            else:
                 params["dates"] = datetime.now(timezone.utc).strftime("%Y%m%d")
+            try:
                 data = self._request(f"{ESPN_BASE}/{path}/scoreboard", params)
-                events = data.get("events") or []
-            filtered = _filter_events(events)
-            if filtered:
-                return filtered
-            # if filter empty but events exist and team is national/olympic, return all limited
-            if events and team.get("league") in ("mens-olympic-basketball", "soccer"):
-                return [self._norm_espn_event(e) for e in events[:12]]
-            return filtered if filtered else None
-
-        def espn_team_schedule_scores() -> Optional[List[dict]]:
-            if not tid:
+            except Exception:
                 return None
-            data = self._request(f"{ESPN_BASE}/{path}/teams/{tid}/schedule")
-            events = data.get("events") or []
-            out = []
-            for e in events:
-                g = self._norm_espn_event(e)
-                st = (g.get("status_state") or "").lower()
-                # prefer live + recent
-                if st in ("in", "post", "pre"):
-                    out.append(g)
-            # put live first
-            out.sort(key=lambda g: 0 if g.get("status_state") == "in" else 1)
-            return out[:15] if out else None
+            events = [e for e in (data.get("events") or []) if _involves_team_event(e)]
+            games = [self._norm_espn_event(e) for e in events]
+            return games if games else None
 
-        def espn_scoreboard_group() -> Optional[List[dict]]:
-            # some leagues expose groups; soft attempt
-            data = self._request(f"{ESPN_BASE}/{path}/scoreboard", {"limit": 50})
-            events = data.get("events") or []
-            filtered = _filter_events(events)
-            return filtered if filtered else None
+        def espn_scoreboard_nodate() -> Optional[List[dict]]:
+            if not path:
+                return None
+            try:
+                data = self._request(f"{ESPN_BASE}/{path}/scoreboard")
+            except Exception:
+                return None
+            events = [e for e in (data.get("events") or []) if _involves_team_event(e)]
+            games = [self._norm_espn_event(e) for e in events]
+            return games if games else None
 
-        def thesportsdb_next_last() -> Optional[List[dict]]:
+        def tsdb_last_next() -> Optional[List[dict]]:
             tsid = team.get("thesportsdb_id") or ""
             if not tsid:
                 return None
-            out = []
-            for endpoint in ("eventslast.php", "eventsnext.php"):
-                data = self._request(f"{THESPORTSDB_BASE}/{endpoint}", {"id": tsid})
-                key = "results" if "last" in endpoint else "events"
-                for e in data.get(key) or []:
-                    g = self._norm_tsdb_event(e)
-                    # mark finished last events
-                    if "last" in endpoint and g.get("home_score") not in (None, "–"):
-                        g["status_state"] = "post"
-                        g["status"] = "Final"
-                    out.append(g)
-            return out[:12] if out else None
-
-        def thesportsdb_livescore() -> Optional[List[dict]]:
-            # league livescore when sport known
-            sport = (team.get("sport") or "").lower()
-            league_map = {
-                "soccer": "soccer",
-                "basketball": "basketball",
-                "baseball": "baseball",
-                "football": "americanfootball",
-                "hockey": "icehockey",
-            }
-            s = league_map.get(sport)
-            if not s:
-                return None
+            out: List[dict] = []
             try:
-                data = self._request(f"{THESPORTSDB_BASE}/livescore.php", {"s": s})
-            except Exception:
-                return None
-            events = data.get("events") or data.get("livescore") or []
-            if not events:
-                return None
-            out = []
-            for e in events:
-                g = self._norm_tsdb_event(e)
-                blob = f"{g.get('name','')} {g.get('home_team','')} {g.get('away_team','')}".lower()
-                if search in blob or (name_l and name_l.split()[0] in blob):
-                    g["status_state"] = "in"
-                    g["status"] = "LIVE"
+                past = self._request(f"{THESPORTSDB_BASE}/eventslast.php", {"id": tsid})
+                for e in (past.get("results") or [])[:5]:
+                    g = self._norm_tsdb_event(e)
+                    g["status_state"] = "post"
+                    g["status"] = g.get("status") or "Final"
                     out.append(g)
-            return out if out else None
+            except Exception:
+                pass
+            try:
+                nxt = self._request(f"{THESPORTSDB_BASE}/eventsnext.php", {"id": tsid})
+                for e in (nxt.get("events") or [])[:5]:
+                    g = self._norm_tsdb_event(e)
+                    g["status_state"] = "pre"
+                    out.append(g)
+            except Exception:
+                pass
+            picked = _pick_scoreboard_view(out)
+            return picked if picked else (out[:2] if out else None)
 
-        return self._try_sources(
+        def curated_never_empty() -> List[dict]:
+            q = quote_plus(team.get("name") or team_key)
+            return [{
+                "id": "fallback-scores",
+                "name": f"{team.get('name')} — scores",
+                "date": "",
+                "status": "See sources",
+                "status_state": "pre",
+                "detail": f"https://www.google.com/search?q={q}+score",
+                "home_team": team.get("short") or team.get("name"),
+                "home_score": "–",
+                "away_team": "Opponent",
+                "away_score": "–",
+                "venue": "",
+                "broadcast": None,
+                "source": "fallback",
+                "home_logo": None,
+                "away_logo": None,
+            }]
+
+        # Prefer schedule-derived last/next — most reliable year-round
+        result, src = self._try_sources(
             [
-                ("espn-scoreboard", espn_scoreboard),
-                ("espn-team-schedule", espn_team_schedule_scores),
-                ("espn-scoreboard-wide", espn_scoreboard_group),
-                ("tsdb-live", thesportsdb_livescore),
-                ("tsdb-next-last", thesportsdb_next_last),
+                ("espn-team-schedule", espn_team_schedule_all),
+                ("espn-scoreboard-today", espn_scoreboard_today),
+                ("espn-scoreboard", espn_scoreboard_nodate),
+                ("tsdb-last-next", tsdb_last_next),
+                ("fallback", curated_never_empty),
             ],
             cache_key,
-            allow_empty=True,
+            allow_empty=False,
         )
+        if not result:
+            result, src = curated_never_empty(), "fallback"
+        return result, src
 
     def get_team_info(self, team_key: str) -> Tuple[dict, str]:
         if team_key not in TEAMS:
@@ -1048,55 +1061,66 @@ class SportsAPIClient:
         return rows, src
 
     def get_schedule(self, team_key: str) -> Tuple[List[dict], str]:
-        """Always populate selected team's schedule."""
+        """Full ordered schedule (when / where) for the selected team."""
         if team_key not in TEAMS:
             return [], "unknown-team"
         team = TEAMS[team_key]
-        cache_key = f"sch:{team_key}:v4"
+        cache_key = f"sch:{team_key}:v6"
+
         if team.get("hs") and team_key in LOCAL_PROGRAMS and not team.get("espn_id"):
             return local_program_rows(team_key, "schedule"), "local-program"
+
         path = team.get("espn_path") or ""
         tid = str(team.get("espn_id") or "")
 
+        def _sort_key(g: dict) -> str:
+            return (g.get("date") or "9999")[:19]
+
         def espn_team_schedule() -> Optional[List[dict]]:
-            if not tid:
+            if not tid or not path:
                 return None
             try:
                 data = self._request(f"{ESPN_BASE}/{path}/teams/{tid}/schedule")
             except Exception:
                 return None
             events = data.get("events") or []
-            out = [self._norm_espn_event(e) for e in events]
-            return out[-30:] if out else None
-
-        def espn_scoreboard_as_schedule() -> Optional[List[dict]]:
-            try:
-                games, _ = self.get_scoreboard(team_key)
-            except Exception:
-                games = []
+            games = [self._norm_espn_event(e) for e in events]
+            # chronological
+            games = sorted(games, key=_sort_key)
             return games if games else None
 
         def tsdb_schedule() -> Optional[List[dict]]:
             tsid = team.get("thesportsdb_id") or ""
             if not tsid:
                 return None
-            out = []
+            out: List[dict] = []
             for endpoint, key in (("eventslast.php", "results"), ("eventsnext.php", "events")):
                 try:
                     data = self._request(f"{THESPORTSDB_BASE}/{endpoint}", {"id": tsid})
+                    for e in data.get(key) or []:
+                        g = self._norm_tsdb_event(e)
+                        if "last" in endpoint:
+                            g["status_state"] = "post"
+                        out.append(g)
                 except Exception:
                     continue
-                for e in data.get(key) or []:
-                    out.append(self._norm_tsdb_event(e))
+            out = sorted(out, key=_sort_key)
             return out if out else None
+
+        def scoreboard_slice() -> Optional[List[dict]]:
+            try:
+                games, _ = self.get_scoreboard(team_key)
+            except Exception:
+                return None
+            return games if games else None
 
         def link_fallback() -> List[dict]:
             q = quote_plus(team.get("name") or team_key)
             return [{
-                "id": "link",
-                "name": f"{team.get('name')} schedule (search)",
+                "id": "sch-link",
+                "name": f"{team.get('name')} full schedule",
                 "date": "",
-                "status": "See link",
+                "status": "Open link",
                 "status_state": "pre",
                 "detail": f"https://www.google.com/search?q={q}+schedule",
                 "home_team": team.get("short") or "",
@@ -1108,15 +1132,25 @@ class SportsAPIClient:
                 "source": "search",
             }]
 
-        return self._try_sources(
+        games, src = self._try_sources(
             [
                 ("espn-team-schedule", espn_team_schedule),
-                ("espn-scoreboard", espn_scoreboard_as_schedule),
                 ("thesportsdb", tsdb_schedule),
+                ("scoreboard-slice", scoreboard_slice),
                 ("search-link", link_fallback),
             ],
             cache_key,
+            allow_empty=False,
+            ttl=self.schedule_ttl if hasattr(self, "schedule_ttl") else 180.0,
         )
+        if not games:
+            games, src = link_fallback(), "search-link"
+        # ensure sorted
+        try:
+            games = sorted(games, key=_sort_key)
+        except Exception:
+            pass
+        return games, src
 
     def get_recent_form(self, team_key: str) -> Tuple[List[dict], str]:
         """Recent finished games for selected team only; falls back to broader history."""
