@@ -61,3 +61,14 @@ Tighten policies later (auth.uid(), mod roles). Without Supabase, community uses
 `streamlit run app.py` — main file `app.py` on Cloud.
 
 Educational betting tools only. Not affiliated with leagues/schools.
+
+
+## API notes / rate limits
+
+| Source | Notes |
+|--------|--------|
+| **ESPN** (`site.api.espn.com`) | Unofficial/undocumented. No published quota; community guidance ~1 req / 30–60s for live polling. App throttles ~3 req/s max and retries 429. |
+| **TheSportsDB** free | Key `123` in URL path. **30 requests/minute**. Premium raises limits + livescores. |
+| **The Odds API** | Free tier ~500 req/month — use secrets key. |
+
+HS / track (Reynoldsburg, Tiffin): curated program hubs + MaxPreps/NFHS/TFRRS links when ESPN IDs are absent.

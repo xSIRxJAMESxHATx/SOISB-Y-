@@ -311,7 +311,7 @@ TEAMS: Dict[str, dict] = {
 }
 
 ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports"
-THESPORTSDB_BASE = "https://www.thesportsdb.com/api/v1/json/3"
+THESPORTSDB_BASE = "https://www.thesportsdb.com/api/v1/json/123"  # free tier key; 30 req/min
 ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 
 
@@ -355,21 +355,137 @@ def reddit_url(team_key: str) -> str:
     )
 
 
+# Local-only cards for programs without stable ESPN IDs
+LOCAL_PROGRAMS = {
+    "rhs_football": {
+        "label": "Reynoldsburg Raiders Football",
+        "note": "OHSAA / OCC — purple & gold. Live scores via local/NFHS sources when in season.",
+        "links": [
+            ("NFHS Network", "https://www.nfhsnetwork.com/"),
+            ("MaxPreps search", "https://www.maxpreps.com/search/default.aspx?type=school&search=reynoldsburg&state=oh"),
+            ("Google schedule", "https://www.google.com/search?q=Reynoldsburg+Raiders+football+schedule"),
+        ],
+    },
+    "rhs_mbb": {
+        "label": "Reynoldsburg Raiders Boys Basketball",
+        "note": "OHSAA boys basketball — purple & gold Raiders.",
+        "links": [
+            ("NFHS Network", "https://www.nfhsnetwork.com/"),
+            ("MaxPreps search", "https://www.maxpreps.com/search/default.aspx?type=school&search=reynoldsburg&state=oh"),
+            ("Google schedule", "https://www.google.com/search?q=Reynoldsburg+Raiders+basketball+schedule"),
+        ],
+    },
+    "tiffin_tf": {
+        "label": "Tiffin University Men's Track & Field",
+        "note": "NCAA DII / G-MAC — Dragons track & field. Meets populate seasonally.",
+        "links": [
+            ("Tiffin Athletics", "https://gotiffindragons.com/"),
+            ("TFRRS search", "https://www.tfrrs.org/"),
+            ("Google schedule", "https://www.google.com/search?q=Tiffin+University+track+and+field+schedule"),
+        ],
+    },
+}
+
+
+def local_program_rows(team_key: str, kind: str = "schedule") -> List[dict]:
+    prog = LOCAL_PROGRAMS.get(team_key) or {}
+    label = prog.get("label") or team_key
+    note = prog.get("note") or ""
+    sport_hint = ""
+    if "football" in team_key:
+        sport_hint = "football"
+    elif "mbb" in team_key or "basketball" in team_key:
+        sport_hint = "basketball"
+    elif "tf" in team_key or "track" in team_key:
+        sport_hint = "track"
+
+    # MaxPreps enrichment for OH high schools
+    mp_rows: List[dict] = []
+    if team_key.startswith("rhs_"):
+        try:
+            from .maxpreps import as_schedule_rows, as_standings_rows
+            if kind == "standings":
+                mp_rows = as_standings_rows("Reynoldsburg", "oh", sport_hint)
+            else:
+                mp_rows = as_schedule_rows("Reynoldsburg", "oh", sport_hint)
+        except Exception:
+            mp_rows = []
+
+    if kind == "standings":
+        base = [{
+            "Team": label,
+            "W": "—",
+            "L": "—",
+            "PCT": "—",
+            "GB": "—",
+            "STRK": note[:80] or "Local program",
+        }] + [
+            {"Team": name, "W": "link", "L": "", "PCT": "", "GB": "", "STRK": url}
+            for name, url in (prog.get("links") or [])
+        ]
+        # merge maxpreps standings links (skip duplicate Team header)
+        for r in mp_rows:
+            if r.get("Team") and r.get("Team") != label:
+                base.append(r)
+        return base
+
+    rows = [{
+        "id": f"local-{team_key}",
+        "name": label,
+        "date": "",
+        "status": "Program hub",
+        "status_state": "pre",
+        "detail": note,
+        "home_team": label,
+        "home_score": "–",
+        "away_team": "See links",
+        "away_score": "–",
+        "venue": "",
+        "broadcast": None,
+        "source": "local-program",
+    }]
+    for name, url in (prog.get("links") or []):
+        rows.append({
+            "id": url,
+            "name": name,
+            "date": "",
+            "status": "Link",
+            "status_state": "pre",
+            "detail": url,
+            "home_team": name,
+            "home_score": "–",
+            "away_team": "Open",
+            "away_score": "–",
+            "venue": "",
+            "broadcast": None,
+            "source": "local-program",
+        })
+    for r in mp_rows:
+        rows.append(r)
+    return rows
+
+
 class SportsAPIClient:
+    """Multi-source client: memory + disk cache, exponential backoff, throttle."""
 
-    """Multi-source client with cache, retries, and missing-data safety."""
-
-    def __init__(self, timeout: float = 8.0, cache_ttl: float = 35.0):
+    def __init__(self, timeout: float = 7.0, cache_ttl: float = 45.0):
         self.timeout = timeout
         self.cache_ttl = cache_ttl
+        self.live_cache_ttl = 15.0
+        self.schedule_ttl = 180.0
+        self.standings_ttl = 300.0
+        self.news_ttl = 120.0
+        self._min_interval = 0.4
+        self._last_request_ts = 0.0
         self.session = requests.Session()
         self.session.headers.update(
             {
-                "User-Agent": "SBSBY-SportsHub/2.0 (+https://share.streamlit.io)",
+                "User-Agent": "SOSBY-SportsHub/3.4 (+https://share.streamlit.io)",
                 "Accept": "application/json",
             }
         )
-        self._cache: Dict[str, Tuple[float, Any]] = {}
+        # memory: key -> (ts, data, ttl)
+        self._cache: Dict[str, Tuple[float, Any, float]] = {}
         self.odds_api_key = (
             os.environ.get("ODDS_API_KEY")
             or os.environ.get("THE_ODDS_API_KEY")
@@ -378,27 +494,73 @@ class SportsAPIClient:
 
     def _get_cached(self, key: str) -> Optional[Any]:
         hit = self._cache.get(key)
-        if hit and (time.time() - hit[0]) < self.cache_ttl:
-            return hit[1]
+        if hit:
+            ts, data, ttl = hit
+            if (time.time() - ts) < ttl:
+                return data
+        # disk layer
+        try:
+            from .disk_cache import disk_get
+            # use longest relevant default for disk
+            disk_ttl = self.schedule_ttl
+            if key.startswith("sb:"):
+                disk_ttl = self.live_cache_ttl
+            elif key.startswith("std:"):
+                disk_ttl = self.standings_ttl
+            elif key.startswith("news:"):
+                disk_ttl = self.news_ttl
+            data = disk_get(key, disk_ttl)
+            if data is not None:
+                self._cache[key] = (time.time(), data, disk_ttl)
+                return data
+        except Exception:
+            pass
         return None
 
-    def _set_cache(self, key: str, data: Any) -> None:
-        self._cache[key] = (time.time(), data)
+    def _set_cache(self, key: str, data: Any, ttl: Optional[float] = None) -> None:
+        use_ttl = float(ttl if ttl is not None else self.cache_ttl)
+        self._cache[key] = (time.time(), data, use_ttl)
+        try:
+            from .disk_cache import disk_set
+            disk_set(key, data)
+        except Exception:
+            pass
 
     def clear_cache(self) -> None:
         self._cache.clear()
+        try:
+            from .disk_cache import disk_clear
+            disk_clear()
+        except Exception:
+            pass
+
+    def _throttle(self) -> None:
+        elapsed = time.time() - self._last_request_ts
+        if elapsed < self._min_interval:
+            time.sleep(self._min_interval - elapsed)
+        self._last_request_ts = time.time()
 
     @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=0.4, min=0.4, max=3.5),
+        stop=stop_after_attempt(4),
+        wait=wait_exponential(multiplier=0.6, min=0.5, max=8.0),
         retry=retry_if_exception_type((requests.RequestException, APIError)),
         reraise=True,
     )
     def _request(self, url: str, params: Optional[dict] = None) -> Any:
-        resp = self.session.get(url, params=params, timeout=self.timeout)
+        """HTTP GET with throttle + exponential backoff (tenacity)."""
+        self._throttle()
+        try:
+            resp = self.session.get(url, params=params, timeout=self.timeout)
+        except requests.RequestException as e:
+            raise APIError(f"Network error: {e}") from e
         if resp.status_code == 429:
+            # explicit backoff before tenacity also retries
+            time.sleep(2.0)
             raise APIError(f"Rate limited: {url}")
+        if resp.status_code >= 500:
+            raise APIError(f"Server {resp.status_code}: {url}")
         if resp.status_code >= 400:
+            # don't retry most 4xx except 429
             raise APIError(f"HTTP {resp.status_code}: {url}")
         try:
             return resp.json()
@@ -410,6 +572,7 @@ class SportsAPIClient:
         sources: List[Tuple[str, Callable[[], Any]]],
         cache_key: str,
         allow_empty: bool = True,
+        ttl: Optional[float] = None,
     ) -> Tuple[Any, str]:
         cached = self._get_cached(cache_key)
         if cached is not None:
@@ -425,25 +588,59 @@ class SportsAPIClient:
                 if not allow_empty and (data == [] or data == {}):
                     errors.append(f"{name}: empty payload")
                     continue
-                self._set_cache(cache_key, data)
+                use_ttl = ttl
+                if use_ttl is None:
+                    if cache_key.startswith("sb:"):
+                        try:
+                            live = any(
+                                (g.get("status_state") or "") == "in"
+                                for g in (data if isinstance(data, list) else [])
+                            )
+                            use_ttl = self.live_cache_ttl if live else self.cache_ttl
+                        except Exception:
+                            use_ttl = self.cache_ttl
+                    elif cache_key.startswith("sch:"):
+                        use_ttl = self.schedule_ttl
+                    elif cache_key.startswith("std:"):
+                        use_ttl = self.standings_ttl
+                    elif cache_key.startswith("news:"):
+                        use_ttl = self.news_ttl
+                    else:
+                        use_ttl = self.cache_ttl
+                self._set_cache(cache_key, data, use_ttl)
                 return data, name
             except Exception as e:
                 errors.append(f"{name}: {type(e).__name__}: {e}")
                 continue
 
-        empty: Any = [] if allow_empty else {}
-        self._set_cache(cache_key, empty)
-        return empty, "fallback-empty"
+        empty: Any = [] 
+        self._set_cache(cache_key, empty, 20.0)
+        return empty, "none:" + ";".join(errors[:3])
 
-    # ---- Scoreboard ----
     def get_scoreboard(
         self, team_key: str, date: Optional[str] = None
     ) -> Tuple[List[dict], str]:
-        """Real-time scoreboard with multi-source failover and live-aware cache TTL."""
+        """Real-time scoreboard — most reliable path with multi-source failover."""
         if team_key not in TEAMS:
             return [], "unknown-team"
         team = TEAMS[team_key]
-        cache_key = f"sb:{team_key}:{date or 'today'}"
+        cache_key = f"sb:{team_key}:{date or 'today'}:v4"
+        # HS / track: always-available local program rows (ESPN IDs unreliable)
+        if team.get("hs") and team_key in LOCAL_PROGRAMS:
+            cached = self._get_cached(cache_key)
+            if cached is not None:
+                return cached, "cache"
+            # still try ESPN/schedule once, then local
+            try:
+                if team.get("espn_id"):
+                    pass  # fall through to normal sources
+                else:
+                    rows = local_program_rows(team_key, "schedule")
+                    self._set_cache(cache_key, rows, self.cache_ttl)
+                    return rows, "local-program"
+            except Exception:
+                rows = local_program_rows(team_key, "schedule")
+                return rows, "local-program"
         path = team.get("espn_path") or ""
         tid = str(team.get("espn_id") or "")
         search = (
@@ -648,176 +845,94 @@ class SportsAPIClient:
 
     # ---- News ----
     def get_news(self, team_key: str, limit: int = 12) -> Tuple[List[dict], str]:
-        """Team-only news + matching team description."""
+        """Headlines only for the selected team (no long club descriptions)."""
         if team_key not in TEAMS:
             return [], "unknown-team"
         team = TEAMS[team_key]
-        cache_key = f"news:{team_key}:{limit}"
+        cache_key = f"news:{team_key}:{limit}:v3"
         needles = []
         for k in ("name", "short", "odds_team", "search_name", "mascot"):
             v = (team.get(k) or "").lower().strip()
             if v and len(v) > 2 and v not in needles:
                 needles.append(v)
-        # token needles (e.g. "Guardians" from full name)
         for part in (team.get("name") or "").lower().split():
             if len(part) > 3 and part not in needles:
                 needles.append(part)
 
-        def _relevant(headline: str, description: str = "") -> bool:
-            text = f"{headline} {description}".lower()
+        def _relevant(h: str, d: str = "") -> bool:
+            text = f"{h} {d}".lower()
             return any(n in text for n in needles) if needles else True
 
-        def team_description_card() -> List[dict]:
-            """Always-available selected-team blurb from ESPN / TheSportsDB."""
-            cards = []
-            tid = team.get("espn_id") or ""
-            path = team.get("espn_path") or ""
-            try:
-                if tid and path:
-                    data = self._request(f"{ESPN_BASE}/{path}/teams/{tid}")
-                    t0 = data.get("team") or {}
-                    desc = (t0.get("standingSummary") or "")
-                    rec = ""
-                    for item in t0.get("record", {}).get("items") or []:
-                        if item.get("description") == "Overall Summary" or item.get("type") == "total":
-                            rec = item.get("summary") or ""
-                            break
-                    cards.append({
-                        "headline": f"{t0.get('displayName') or team.get('name')} — team page",
-                        "description": (desc or f"Record {rec}".strip()) or f"Official ESPN profile for {team.get('name')}.",
-                        "published": "",
-                        "url": f"https://www.espn.com/{path.split('/')[-1]}/team/_/id/{tid}" if tid else "#",
-                        "image": (t0.get("logos") or [{}])[0].get("href"),
-                        "source": "ESPN team",
-                    })
-            except Exception:
-                pass
-            try:
-                tsid = team.get("thesportsdb_id") or ""
-                if tsid:
-                    data = self._request(f"{THESPORTSDB_BASE}/lookupteam.php", {"id": tsid})
-                    t0 = (data.get("teams") or [None])[0] or {}
-                    if t0:
-                        cards.append({
-                            "headline": f"{t0.get('strTeam') or team.get('name')} — club description",
-                            "description": (t0.get("strDescriptionEN") or "")[:400],
-                            "published": "",
-                            "url": t0.get("strWebsite") or "#",
-                            "image": t0.get("strTeamBadge") or t0.get("strTeamLogo"),
-                            "source": "TheSportsDB",
-                        })
-            except Exception:
-                pass
-            if not cards:
-                cards.append({
-                    "headline": f"{team.get('name')} — SO!SB!Y! hub",
-                    "description": f"Team hub for {team.get('name')} ({team.get('short')}). Switch teams anytime from the banner.",
-                    "published": "",
-                    "url": "#",
-                    "image": None,
-                    "source": "SO!SB!Y!",
-                })
-            return cards
-
         def espn_team_news() -> Optional[List[dict]]:
-            tid = team.get("espn_id") or ""
-            path = team.get("espn_path") or ""
-            out: List[dict] = []
-            urls = []
-            if tid and path:
-                urls.append(f"{ESPN_BASE}/{path}/teams/{tid}/news")
-            for url in urls:
-                try:
-                    data = self._request(url, {"limit": max(limit * 2, 15)})
-                except Exception:
-                    continue
-                for a in data.get("articles") or []:
-                    h = a.get("headline") or ""
-                    d = a.get("description") or ""
-                    # still require relevance for safety
-                    if needles and not _relevant(h, d):
-                        # team endpoint is usually OK — allow if team id path
-                        if "/teams/" not in url:
-                            continue
-                    out.append({
-                        "headline": h or "Headline",
-                        "description": d,
-                        "published": a.get("published") or "",
-                        "url": _safe_get(a, "links", "web", "href") or "#",
-                        "image": (a.get("images") or [{}])[0].get("url"),
-                        "source": "ESPN",
-                    })
-                    if len(out) >= limit:
-                        return out
-            return out[:limit] if out else None
-
-        def espn_league_filtered() -> Optional[List[dict]]:
-            path = team.get("espn_path") or ""
+            tid, path = team.get("espn_id") or "", team.get("espn_path") or ""
+            if not tid or not path or team.get("hs"):
+                return None
             try:
-                data = self._request(f"{ESPN_BASE}/{path}/news", {"limit": 40})
+                data = self._request(f"{ESPN_BASE}/{path}/teams/{tid}/news", {"limit": max(limit, 10)})
             except Exception:
                 return None
             out = []
             for a in data.get("articles") or []:
-                h = a.get("headline") or ""
-                d = a.get("description") or ""
+                h, d = a.get("headline") or "", a.get("description") or ""
+                out.append({
+                    "headline": h or "Headline",
+                    "description": (d or "")[:180],
+                    "published": a.get("published") or "",
+                    "url": _safe_get(a, "links", "web", "href") or "#",
+                    "image": (a.get("images") or [{}])[0].get("url"),
+                    "source": "ESPN",
+                })
+                if len(out) >= limit:
+                    break
+            return out or None
+
+        def espn_filtered() -> Optional[List[dict]]:
+            path = team.get("espn_path") or ""
+            if not path or team.get("hs"):
+                return None
+            try:
+                data = self._request(f"{ESPN_BASE}/{path}/news", {"limit": 50})
+            except Exception:
+                return None
+            out = []
+            for a in data.get("articles") or []:
+                h, d = a.get("headline") or "", a.get("description") or ""
                 if not _relevant(h, d):
                     continue
                 out.append({
                     "headline": h,
-                    "description": d,
+                    "description": (d or "")[:180],
                     "published": a.get("published") or "",
                     "url": _safe_get(a, "links", "web", "href") or "#",
                     "image": (a.get("images") or [{}])[0].get("url"),
-                    "source": "ESPN league-filtered",
+                    "source": "ESPN filtered",
                 })
                 if len(out) >= limit:
                     break
-            return out if out else None
+            return out or None
 
         def search_links() -> List[dict]:
             q = quote_plus(team.get("name") or team_key)
             return [
-                {"headline": f"{team.get('name')} news", "description": f"Google News for {team.get('name')} only", "published": "", "url": f"https://www.google.com/search?q={q}&tbm=nws", "image": None, "source": "Google News"},
-                {"headline": f"{team.get('name')} on ESPN", "description": "ESPN search", "published": "", "url": f"https://www.espn.com/search/_/q/{q}", "image": None, "source": "ESPN"},
-                {"headline": f"{team.get('name')} on CBS", "description": "CBS Sports", "published": "", "url": f"https://www.cbssports.com/search/{q}/", "image": None, "source": "CBS"},
+                {"headline": f"{team.get('name')} — Google News", "description": "", "published": "", "url": f"https://www.google.com/search?q={q}&tbm=nws", "image": None, "source": "Google"},
+                {"headline": f"{team.get('name')} — ESPN", "description": "", "published": "", "url": f"https://www.espn.com/search/_/q/{q}", "image": None, "source": "ESPN"},
+                {"headline": f"{team.get('name')} — CBS", "description": "", "published": "", "url": f"https://www.cbssports.com/search/{q}/", "image": None, "source": "CBS"},
             ]
 
-        # Compose: description cards first, then articles
-        articles, src = self._try_sources(
-            [
-                ("espn-team-news", espn_team_news),
-                ("espn-league-filtered", espn_league_filtered),
-                ("search-links", search_links),
-            ],
+        return self._try_sources(
+            [("espn-team", espn_team_news), ("espn-filtered", espn_filtered), ("links", search_links)],
             cache_key,
         )
-        desc = team_description_card()
-        # hard filter articles again
-        filtered = []
-        for a in articles or []:
-            if a.get("source") in ("Google News", "ESPN", "CBS", "SO!SB!Y!", "TheSportsDB", "ESPN team"):
-                filtered.append(a)
-            elif _relevant(a.get("headline") or "", a.get("description") or ""):
-                filtered.append(a)
-        combined = desc + filtered
-        # de-dupe headlines
-        seen = set()
-        out = []
-        for a in combined:
-            h = (a.get("headline") or "").strip().lower()
-            if h in seen:
-                continue
-            seen.add(h)
-            out.append(a)
-        return out[: max(limit + 2, 8)], src
 
     def get_standings(self, team_key: str) -> Tuple[List[dict], str]:
         """Always return standings context for the selected team."""
         if team_key not in TEAMS:
             return [], "unknown-team"
         team = TEAMS[team_key]
-        cache_key = f"std:{team_key}:v2"
+        cache_key = f"std:{team_key}:v4"
+        if team.get("hs") and team_key in LOCAL_PROGRAMS and not team.get("espn_id"):
+            rows = local_program_rows(team_key, "standings")
+            return rows, "local-program"
         path = team.get("espn_path") or ""
         tid = str(team.get("espn_id") or "")
         year = time.gmtime().tm_year
@@ -933,11 +1048,13 @@ class SportsAPIClient:
         return rows, src
 
     def get_schedule(self, team_key: str) -> Tuple[List[dict], str]:
-        """Always try to populate selected team's schedule."""
+        """Always populate selected team's schedule."""
         if team_key not in TEAMS:
             return [], "unknown-team"
         team = TEAMS[team_key]
-        cache_key = f"sch:{team_key}:v2"
+        cache_key = f"sch:{team_key}:v4"
+        if team.get("hs") and team_key in LOCAL_PROGRAMS and not team.get("espn_id"):
+            return local_program_rows(team_key, "schedule"), "local-program"
         path = team.get("espn_path") or ""
         tid = str(team.get("espn_id") or "")
 

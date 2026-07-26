@@ -634,28 +634,16 @@ with tabs[4]:
 # ===== News =====
 with tabs[5]:
     st.markdown('<div class="section-title">News</div>', unsafe_allow_html=True)
-    st.caption(f"Only **{team.get('name')}** — team description + filtered headlines")
+    st.caption(f"Headlines for **{team.get('name')}** only")
     try:
         arts, src = client.get_news(team_key, 16)
         if not arts:
-            st.info("No team-specific articles right now.")
+            st.info("No headlines right now — try Refresh.")
         for a in arts:
-            img = a.get("image")
-            cols = st.columns([1, 4]) if img else st.columns([1])
-            if img:
-                with cols[0]:
-                    try:
-                        st.image(img, use_container_width=True)
-                    except Exception:
-                        pass
-                with cols[-1]:
-                    st.markdown(f"**[{a.get('headline')}]({a.get('url') or '#'})**")
-                    st.caption((a.get("description") or "")[:240])
-                    st.caption(f"{a.get('source') or ''} · {(a.get('published') or '')[:16]}")
-            else:
-                st.markdown(f"**[{a.get('headline')}]({a.get('url') or '#'})**")
-                st.caption((a.get("description") or "")[:240])
-                st.caption(f"{a.get('source') or ''}")
+            st.markdown(f"**[{a.get('headline')}]({a.get('url') or '#'})**")
+            meta = " · ".join(filter(None, [a.get("source") or "", (a.get("published") or "")[:16]]))
+            if meta:
+                st.caption(meta)
         src_note(src)
     except Exception as e:
         st.warning("News unavailable.")
@@ -670,15 +658,20 @@ with tabs[6]:
         rows, src = client.get_standings(team_key)
         if rows:
             df = pd.DataFrame(rows)
-            # Highlight selected team rows when present
             focus = (team.get("name") or team.get("short") or "").lower()
             if "Team" in df.columns and focus:
-                mask = df["Team"].astype(str).str.lower().str.contains(focus.split()[-1] if focus else "", na=False)
-                if mask.any():
-                    st.markdown("**Your team**")
-                    st.dataframe(df[mask], use_container_width=True, hide_index=True)
-                    st.markdown("**Full table / links**")
+                token = focus.split()[-1] if focus else ""
+                if token:
+                    mask = df["Team"].astype(str).str.lower().str.contains(token, na=False)
+                    if mask.any():
+                        st.markdown("**Your team**")
+                        st.dataframe(df[mask], use_container_width=True, hide_index=True)
             st.dataframe(df, use_container_width=True, hide_index=True)
+            # Link rows
+            for r in rows:
+                s = str(r.get("STRK") or "")
+                if s.startswith("http"):
+                    st.markdown(f"- [{r.get('Team')}]({s})")
             src_note(src)
         else:
             st.info("Standings unavailable for this league window.")
@@ -696,11 +689,15 @@ with tabs[7]:
         if not games:
             st.info("No schedule rows yet — try Refresh.")
         for g in games or []:
-            st.markdown(
-                f"**{g.get('name') or (str(g.get('away_team','')) + ' @ ' + str(g.get('home_team','')))}** · "
-                f"{(g.get('date') or '')[:16]} · {g.get('status') or g.get('detail') or ''} · "
-                f"{g.get('away_score','–')}–{g.get('home_score','–')}"
-            )
+            detail = g.get("detail") or ""
+            if g.get("source") == "local-program" and str(detail).startswith("http"):
+                st.markdown(f"**[{g.get('name')}]({detail})**")
+            else:
+                st.markdown(
+                    f"**{g.get('name') or (str(g.get('away_team','')) + ' @ ' + str(g.get('home_team','')))}** · "
+                    f"{(g.get('date') or '')[:16]} · {g.get('status') or detail} · "
+                    f"{g.get('away_score','–')}–{g.get('home_score','–')}"
+                )
         src_note(src)
     except Exception as e:
         st.warning("Schedule error.")
