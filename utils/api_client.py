@@ -217,8 +217,8 @@ TEAMS: Dict[str, dict] = {
         "prediction_query": "Team USA basketball",
     },
     "rhs_football": {
-        "name": "Reynoldsburg High School Football",
-        "short": "RHS Football",
+        "name": "Reynoldsburg Raiders Football",
+        "short": "Raiders FB",
         "sport": "football",
         "league": "high-school",
         "espn_id": "",
@@ -228,7 +228,7 @@ TEAMS: Dict[str, dict] = {
         "odds_team": "Reynoldsburg",
         "colors": {
             "primary": "#4B2E83",
-            "secondary": "#E87722",
+            "secondary": "#C5A000",
             "accent": "#FFFFFF",
             "light_bg": "#F8F5FC",
             "light_card": "#FCFAFE",
@@ -238,10 +238,11 @@ TEAMS: Dict[str, dict] = {
         "prediction_query": "Reynoldsburg Raiders football",
         "hs": True,
         "search_name": "Reynoldsburg",
+        "mascot": "Raiders",
     },
     "rhs_mbb": {
-        "name": "Reynoldsburg High School Boys Basketball",
-        "short": "RHS Boys BB",
+        "name": "Reynoldsburg Raiders Boys Basketball",
+        "short": "Raiders BB",
         "sport": "basketball",
         "league": "high-school",
         "espn_id": "",
@@ -251,7 +252,7 @@ TEAMS: Dict[str, dict] = {
         "odds_team": "Reynoldsburg",
         "colors": {
             "primary": "#4B2E83",
-            "secondary": "#E87722",
+            "secondary": "#C5A000",
             "accent": "#FFFFFF",
             "light_bg": "#F8F5FC",
             "light_card": "#FCFAFE",
@@ -261,6 +262,7 @@ TEAMS: Dict[str, dict] = {
         "prediction_query": "Reynoldsburg Raiders basketball",
         "hs": True,
         "search_name": "Reynoldsburg",
+        "mascot": "Raiders",
     },
     "tiffin_tf": {
         "name": "Tiffin University Men's Track & Field",
@@ -624,10 +626,10 @@ class SportsAPIClient:
             return [], "unknown-team"
         team = TEAMS[team_key]
         cache_key = f"std:{team_key}"
+        path = team.get("espn_path") or ""
+        year = time.gmtime().tm_year
 
-        def espn() -> List[dict]:
-            url = f"{ESPN_BASE}/{team['espn_path']}/standings"
-            data = self._request(url)
+        def _parse_espn_standings(data: Any) -> Optional[List[dict]]:
             rows: List[dict] = []
 
             def walk(node: Any) -> None:
@@ -644,9 +646,7 @@ class SportsAPIClient:
                             rows.append(
                                 {
                                     "Team": team_obj.get("displayName") or "—",
-                                    "W": stats.get("wins")
-                                    or stats.get("overall")
-                                    or "—",
+                                    "W": stats.get("wins") or stats.get("overall") or "—",
                                     "L": stats.get("losses") or "—",
                                     "PCT": stats.get("winPercent") or "—",
                                     "GB": stats.get("gamesBehind") or "—",
@@ -668,7 +668,34 @@ class SportsAPIClient:
                     unique.append(r)
             return unique[:50] if unique else None
 
-        return self._try_sources([("espn", espn)], cache_key)
+        def espn_current() -> Optional[List[dict]]:
+            data = self._request(f"{ESPN_BASE}/{path}/standings")
+            return _parse_espn_standings(data)
+
+        def espn_year(y: int):
+            def _inner() -> Optional[List[dict]]:
+                data = self._request(f"{ESPN_BASE}/{path}/standings?season={y}")
+                return _parse_espn_standings(data)
+            return _inner
+
+        def espn_site_links() -> Optional[List[dict]]:
+            # Soft fallback: directory of standings pages (not scraped tables)
+            q = quote_plus(team.get("name") or team_key)
+            return [
+                {"Team": "ESPN standings page", "W": "—", "L": "—", "PCT": "—", "GB": "—", "STRK": f"https://www.espn.com/search/_/q/{q}%20standings"},
+                {"Team": "CBS Sports search", "W": "—", "L": "—", "PCT": "—", "GB": "—", "STRK": f"https://www.cbssports.com/search/{q}/"},
+                {"Team": "FOX Sports search", "W": "—", "L": "—", "PCT": "—", "GB": "—", "STRK": f"https://www.foxsports.com/search?q={q}"},
+                {"Team": "Official / Google", "W": "—", "L": "—", "PCT": "—", "GB": "—", "STRK": f"https://www.google.com/search?q={q}+standings"},
+                {"Team": "TheSportsDB", "W": "—", "L": "—", "PCT": "—", "GB": "—", "STRK": "https://www.thesportsdb.com/"},
+            ]
+
+        sources = [
+            ("espn", espn_current),
+            (f"espn-{year-1}", espn_year(year - 1)),
+            (f"espn-{year-2}", espn_year(year - 2)),
+            ("standings-links", espn_site_links),
+        ]
+        return self._try_sources(sources, cache_key)
 
     # ---- Schedule ----
     def get_schedule(self, team_key: str) -> Tuple[List[dict], str]:

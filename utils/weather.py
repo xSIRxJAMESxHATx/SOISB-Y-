@@ -145,61 +145,70 @@ def map_links(lat: float, lon: float) -> List[dict]:
     ]
 
 
-def weather_cartoon(summary: str, temp_f: Any, lat: float = 41.5) -> bytes:
-    """Relational weather cartoon (sun, old man winter, etc.)."""
-    W, H = 320, 220
+
+def weather_cartoon(summary: str, temp_f, lat: float = 41.5) -> bytes:
+    """Clean, bold weather badge icon."""
+    W, H = 340, 240
     s = (summary or "").lower()
-    img = Image.new("RGB", (W, H), (135, 200, 245))
-    d = ImageDraw.Draw(img)
     try:
-        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 16)
-        small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 12)
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 18)
+        small = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 13)
     except Exception:
         font = small = ImageFont.load_default()
 
-    # scene pick
     if "snow" in s or "freezing" in s:
-        img = Image.new("RGB", (W, H), (200, 220, 235))
+        bg = (180, 205, 230)
+        img = Image.new("RGB", (W, H), bg)
         d = ImageDraw.Draw(img)
-        d.ellipse([120, 40, 200, 110], fill=(240, 240, 250), outline=(100, 100, 120))
-        d.ellipse([140, 90, 230, 160], fill=(240, 240, 250), outline=(100, 100, 120))
-        for i in range(25):
-            x, y = (i * 37) % W, (i * 53) % H
-            d.ellipse([x, y, x+4, y+4], fill=(255, 255, 255))
-        d.text((W//2, 200), "Old Man Winter says bundle up!", fill=(40, 50, 80), font=small, anchor="mt")
-    elif "thunder" in s or "storm" in s or "rain" in s:
-        img = Image.new("RGB", (W, H), (70, 80, 100))
+        d.ellipse([120, 50, 220, 140], fill=(250, 250, 255), outline=(140, 150, 170), width=3)
+        d.ellipse([140, 100, 250, 180], fill=(250, 250, 255), outline=(140, 150, 170), width=3)
+        for i in range(18):
+            x, y = (i * 41) % W, (i * 29) % H
+            d.line([(x, y), (x+6, y+6)], fill=(255, 255, 255), width=2)
+            d.line([(x+6, y), (x, y+6)], fill=(255, 255, 255), width=2)
+        caption = "Lake-effect mode — bundle up"
+    elif "thunder" in s or "storm" in s:
+        bg = (55, 65, 85)
+        img = Image.new("RGB", (W, H), bg)
         d = ImageDraw.Draw(img)
-        d.ellipse([80, 30, 240, 100], fill=(90, 90, 100))
-        d.polygon([(160, 90), (140, 140), (155, 140), (145, 180), (190, 120), (170, 120), (185, 90)], fill=(255, 220, 50))
-        d.text((W//2, 200), "Storm mode — grab a jacket!", fill=(230, 230, 240), font=small, anchor="mt")
+        d.ellipse([70, 30, 270, 110], fill=(75, 80, 95))
+        d.polygon([(170, 95), (145, 150), (165, 150), (150, 195), (200, 130), (175, 130)], fill=(255, 220, 50))
+        caption = "Storm watch — grab the jacket"
+    elif "rain" in s:
+        bg = (90, 120, 160)
+        img = Image.new("RGB", (W, H), bg)
+        d = ImageDraw.Draw(img)
+        d.ellipse([80, 40, 260, 120], fill=(100, 110, 130))
+        for i in range(12):
+            x = 60 + i * 22
+            d.line([(x, 130), (x-8, 200)], fill=(180, 210, 255), width=3)
+        caption = "Rain on the North Coast"
     elif "clear" in s or "sunny" in s:
-        img = Image.new("RGB", (W, H), (120, 190, 255))
+        bg = (110, 185, 255)
+        img = Image.new("RGB", (W, H), bg)
         d = ImageDraw.Draw(img)
-        d.ellipse([110, 40, 210, 140], fill=(255, 220, 40), outline=(255, 180, 0), width=3)
-        d.ellipse([135, 75, 150, 90], fill=(40, 40, 40))
-        d.ellipse([170, 75, 185, 90], fill=(40, 40, 40))
-        d.arc([140, 95, 180, 120], 0, 180, fill=(40, 40, 40), width=3)
-        # sunglasses
-        d.rectangle([130, 72, 190, 88], outline=(20, 20, 20), width=2)
-        d.text((W//2, 200), "Sunshine with attitude!", fill=(20, 40, 80), font=small, anchor="mt")
-    elif lat < 35 and ("clear" in s or "hot" in s or (isinstance(temp_f, (int, float)) and temp_f > 95)):
-        img = Image.new("RGB", (W, H), (230, 200, 120))
-        d = ImageDraw.Draw(img)
-        d.ellipse([140, 120, 180, 200], fill=(40, 140, 60))
-        d.rectangle([155, 160, 165, 210], fill=(90, 60, 30))
-        d.text((W//2, 30), "Desert dry!", fill=(80, 50, 20), font=font, anchor="mt")
+        d.ellipse([110, 45, 230, 165], fill=(255, 210, 40), outline=(255, 170, 0), width=4)
+        d.ellipse([140, 85, 158, 103], fill=(40, 40, 40))
+        d.ellipse([182, 85, 200, 103], fill=(40, 40, 40))
+        d.arc([145, 105, 195, 140], 10, 170, fill=(40, 40, 40), width=3)
+        # shades
+        d.arc([135, 80, 205, 110], 200, 340, fill=(30, 30, 30), width=3)
+        caption = "Sunshine with swagger"
     else:
-        d.ellipse([100, 50, 220, 140], fill=(200, 200, 210))
-        d.text((W//2, 180), summary[:40] if summary else "Looking outside…", fill=(30, 40, 60), font=small, anchor="mt")
+        bg = (150, 170, 190)
+        img = Image.new("RGB", (W, H), bg)
+        d = ImageDraw.Draw(img)
+        d.ellipse([90, 50, 250, 140], fill=(220, 225, 230), outline=(160, 165, 175), width=3)
+        caption = (summary or "Checking the sky…")[:42]
 
-    # temp badge
     try:
         tlabel = f"{int(float(temp_f))}°F" if temp_f not in (None, "—") else "—°F"
     except Exception:
         tlabel = "—°F"
-    d.rounded_rectangle([10, 10, 90, 40], radius=8, fill=(20, 20, 30))
-    d.text((50, 25), tlabel, fill=(255, 220, 100), font=font, anchor="mm")
+    d.rounded_rectangle([12, 12, 100, 48], radius=10, fill=(25, 25, 35))
+    d.text((56, 30), tlabel, fill=(255, 220, 100), font=font, anchor="mm")
+    d.rounded_rectangle([12, H-42, W-12, H-12], radius=8, fill=(25, 25, 35, 230) if False else (25, 25, 35))
+    d.text((W//2, H-27), caption, fill=(240, 240, 245), font=small, anchor="mm")
 
     buf = io.BytesIO()
     img.save(buf, format="PNG", optimize=True)

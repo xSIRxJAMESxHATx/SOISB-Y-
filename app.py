@@ -40,6 +40,18 @@ from utils.community import (
 from utils.twilio_sms import twilio_configured, send_sms, SETUP_HELP
 from utils.chatbot import reply as bot_reply
 from utils.moments_tickets import moments_for, ticket_links
+from utils.betting_sandbox import sandbox_single_summary, parlay_monte_carlo
+from utils.fun_facts import fun_fact_for_team
+from utils.bet_journal import add_entry, list_entries, clear_all, summary_stats, to_csv
+from utils.betting_sandbox import (
+    poisson_score_matrix, poisson_total_over_prob, monte_carlo,
+    lambdas_from_form, kalman_1d, intriguing_idea,
+)
+from utils.bayes_poisson import (
+    gamma_poisson_update, empirical_bayes_rates,
+    hierarchical_match_preview, rates_from_form_games,
+)
+
 
 st.set_page_config(page_title="SO!SB!Y!", page_icon="🦉", layout="wide", initial_sidebar_state="expanded")
 
@@ -117,21 +129,74 @@ def src_note(s: str) -> None:
     if st.session_state.show_sources:
         st.caption(f"source: {s}")
 
-# Banner + flavor
+# Banner + always-visible team switcher (works when sidebar collapsed)
 live = False
 try:
     live = client.any_live_games(team_key)
 except Exception:
     pass
-live_h = '<span class="live-dot"></span>LIVE' if live else "Believeland Hub"
-st.markdown(f"""
-<div class="sbsby-banner">
-  <h1>Superb Owl! Super Browns! Yeah!</h1>
-  <p class="subtitle">SO!SB!Y! · {team['name']} · {live_h}</p>
-</div>""", unsafe_allow_html=True)
+live_h = '<span class="live-dot"></span>LIVE' if live else (flavor.get("icon") or "🦉") + " Hub"
+
+b_left, b_mid, b_right = st.columns([1, 3.2, 1.4])
+with b_left:
+    try:
+        st.image("assets/superb_owl_icon.png", width=96)
+    except Exception:
+        st.write("🦉")
+    st.caption("Superb Owl")
+with b_mid:
+    st.markdown(f"""
+    <div class="sbsby-banner">
+      <h1>Superb Owl! Super Browns! Yeah!</h1>
+      <p class="subtitle">SO!SB!Y! · {team['name']} · {live_h}</p>
+    </div>""", unsafe_allow_html=True)
+with b_right:
+    st.markdown("##### Switch team")
+    team_options = {v["short"]: k for k, v in TEAMS.items()}
+    labels = list(team_options.keys())
+    try:
+        cur_i = list(team_options.values()).index(team_key)
+    except ValueError:
+        cur_i = 0
+    pick = st.selectbox("Team", labels, index=cur_i, key="main_team_switch", label_visibility="collapsed")
+    new_key = team_options[pick]
+    if new_key != st.session_state.team_key:
+        st.session_state.team_key = new_key
+        st.session_state.selected_player = None
+        st.rerun()
+
 st.markdown(f"**{flavor.get('slogan','')}** — _{flavor.get('witty','')}_")
 if flavor.get("phrases"):
-    st.caption(" · ".join(flavor["phrases"][:6]))
+    st.caption(" · ".join(flavor["phrases"][:8]))
+try:
+    from datetime import datetime, timezone
+    day_key = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    cache_key = f"funfact_{team_key}_{day_key}"
+    if cache_key not in st.session_state:
+        st.session_state[cache_key] = fun_fact_for_team(team_key, team.get("name") or "")
+    fact, fsrc = st.session_state[cache_key]
+    st.info(f"**Today’s fun fact:** {fact}")
+    src_note(fsrc)
+except Exception:
+    pass
+try:
+    idea_key = f"idea_{team_key}_{day_key if 'day_key' in dir() else 'x'}"
+    from datetime import datetime, timezone
+    day_key = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    idea_key = f"idea_{team_key}_{day_key}"
+    if idea_key not in st.session_state:
+        try:
+            _og, _ = client.get_odds(team_key) if odds_key else ([], "")
+        except Exception:
+            _og = []
+        try:
+            _form, _ = client.get_recent_form(team_key)
+        except Exception:
+            _form = []
+        st.session_state[idea_key] = intriguing_idea(_og, _form, team.get("name") or team.get("short") or "")
+    st.success(f"**Intriguing idea of the day:** {st.session_state[idea_key]}")
+except Exception:
+    pass
 
 c1, c2, c3 = st.columns([2.2, 1, 1])
 with c1:
@@ -166,11 +231,35 @@ with m4:
         st.write(team["short"])
 src_note(info_src)
 
+# Team iconography / lingo strip
+ph = flavor.get("phrases") or []
+icon = flavor.get("icon") or "🦉"
+st.markdown(
+    f'<div class="sbsby-card" style="padding:.65rem 1rem;display:flex;flex-wrap:wrap;gap:.4rem;align-items:center">'
+    f'<span style="font-size:1.6rem">{icon}</span>'
+    f'<strong style="color:inherit">{team.get("short")}</strong>'
+    + "".join(f'<span class="odds-chip">{p}</span>' for p in ph[:8])
+    + '</div>',
+    unsafe_allow_html=True,
+)
+if info.get("logo"):
+    try:
+        lc1, lc2, lc3 = st.columns([1, 1, 4])
+        with lc1:
+            st.image(info["logo"], width=64)
+            st.caption("Primary mark")
+        with lc2:
+            # secondary: reuse logo as badge treatment via caption
+            st.image(info["logo"], width=40)
+            st.caption("Secondary / badge")
+    except Exception:
+        pass
+
 tabs = st.tabs([
-    "🏈 Scores + Weather", "🎰 Betting HQ", "💰 Odds", "📺 Watch", "📰 News",
+    "🏈 Scores + Weather", "🎰 Betting HQ", "🧪 Sandbox", "💰 Odds", "📺 Watch", "📰 News",
     "📊 Standings", "📅 Schedule", "📈 Trends", "🏆 Leaders", "⭐ Greats",
     "👤 Players", "💬 Community", "🤖 Desk Bot", "🎬 Moments", "🎫 Tickets",
-    "🗻 Rushmore", "🎯 Markets", "🔔 Alerts / SMS",
+    "🗻 Rushmore", "📒 Journal", "🎯 Markets", "🔔 Alerts / SMS",
 ])
 
 # ===== Scores + Weather =====
@@ -225,6 +314,25 @@ with tabs[0]:
 with tabs[1]:
     st.markdown('<div class="section-title">Sports Betting Dashboard</div>', unsafe_allow_html=True)
     st.caption("Educational only — not gambling advice.")
+    with st.expander("Kelly math & odds formats"):
+        st.markdown("""
+**American → decimal:**  
+- Positive odds `+150` → `1 + 150/100 = 2.50`  
+- Negative odds `-200` → `1 + 100/200 = 1.50`
+
+**Implied probability:** `1 / decimal_odds`
+
+**Kelly fraction:**  
+`f* = (b·p − q) / b` where `b = decimal − 1`, `p` = your win prob, `q = 1 − p`.  
+We show **full / half / quarter** Kelly and cap at 25% of bankroll.
+
+| Format | Example | Meaning |
+|--------|---------|---------|
+| American | +150 / −200 | Profit on $100 risk / stake to win $100 |
+| Decimal | 2.50 | Total return per 1 unit staked |
+| Fractional | 3/2 | Profit relative to stake |
+        """)
+
     try:
         dash, dsrc = client.get_betting_dashboard(team_key)
     except Exception:
@@ -306,7 +414,157 @@ with tabs[1]:
     src_note(dsrc)
 
 # ===== Odds detail =====
+
+# Sandbox
 with tabs[2]:
+    st.markdown('<div class="section-title">Bet & Parlay Sandbox</div>', unsafe_allow_html=True)
+    st.caption("Educational simulator — not gambling advice. No real money.")
+    try:
+        br = st.number_input("Bankroll $", min_value=10.0, value=500.0, step=25.0, key="sb_br")
+        c1, c2, c3 = st.columns(3)
+        amer = c1.number_input("American odds", value=150, step=10, key="sb_amer")
+        wp = c2.slider("Your win %", 1, 99, 55, key="sb_wp") / 100.0
+        stake = c3.number_input("Stake $", min_value=1.0, value=25.0, step=5.0, key="sb_stake")
+        if st.button("Run single-bet simulation"):
+            summary = sandbox_single_summary(amer, wp, stake, br)
+            if summary.get("error"):
+                st.error(summary["error"])
+            else:
+                st.write(f"Decimal **{summary['decimal']}** · Implied **{summary['implied_prob']}** · Edge **{summary['edge']}**")
+                st.dataframe(summary.get("kelly_ladder") or [], use_container_width=True, hide_index=True)
+                mc = summary.get("monte_carlo_50_bets") or {}
+                st.write(f"Monte Carlo (50 bets × {mc.get('trials')} trials): median **${mc.get('median_final')}** · 5% **${mc.get('p05')}** · 95% **${mc.get('p95')}** · bust-ish rate **{mc.get('bust_rate_pct')}%**")
+        st.markdown("#### Parlay lab")
+        nlegs = st.slider("Legs", 2, 5, 2, key="sb_legs")
+        leg_o, leg_p = [], []
+        for i in range(nlegs):
+            a, b = st.columns(2)
+            lo = a.number_input(f"Leg {i+1} American", value=100, step=10, key=f"lo{i}")
+            lp = b.slider(f"Leg {i+1} win %", 1, 99, 50, key=f"lp{i}") / 100.0
+            from utils.betting_tools import american_to_decimal as atd
+            d = atd(lo)
+            if d:
+                leg_o.append(d)
+                leg_p.append(lp)
+        pstake = st.number_input("Parlay stake $", min_value=1.0, value=10.0, key="sb_pstake")
+        if st.button("Simulate parlay"):
+            res = parlay_monte_carlo(leg_o, leg_p, pstake, br, trials=500)
+            if res.get("error"):
+                st.error(res["error"])
+            else:
+                st.write(res)
+        st.markdown("#### Poisson score model")
+        st.caption("Independent Poisson — λ can be mapped from recent team scoring rates.")
+        try:
+            form_g, _fs = client.get_recent_form(team_key)
+            est = lambdas_from_form(form_g, team.get("name") or "")
+            st.caption(f"Live form λ estimate: for={est.get('lambda_for')} against={est.get('lambda_against')} (n={est.get('n')}, {est.get('source')})")
+            default_h = float(est.get("lambda_for") or 1.3)
+            default_a = float(est.get("lambda_against") or 1.2)
+        except Exception:
+            default_h, default_a = 1.3, 1.2
+        ph, pa, line = st.columns(3)
+        lam_h = ph.number_input("λ home / for", min_value=0.1, value=float(round(default_h, 2)), step=0.1)
+        lam_a = pa.number_input("λ away / against", min_value=0.1, value=float(round(default_a, 2)), step=0.1)
+        tot_line = line.number_input("Total line", min_value=0.5, value=2.5, step=0.5)
+        if st.button("Run Poisson"):
+            mat = poisson_score_matrix(lam_h, lam_a)
+            st.write({k: mat[k] for k in ("p_home", "p_draw", "p_away", "most_likely_score", "most_likely_p")})
+            st.write(poisson_total_over_prob(lam_h, lam_a, tot_line))
+        st.markdown("#### Detailed Monte Carlo")
+        st.caption("Antithetic variates + optional stratified sampling.")
+        nb = st.slider("Bets per path", 10, 200, 50)
+        tr = st.slider("Trials", 100, 2000, 600, 100)
+        use_strat = st.checkbox("Stratified sampling", value=True)
+        if st.button("Run detailed MC"):
+            from utils.betting_tools import american_to_decimal as atd
+            d = atd(amer)
+            if d:
+                detailed = monte_carlo(d, wp, stake, nb, br, trials=tr, antithetic=True, stratified=use_strat)
+                st.json(detailed)
+        st.markdown("#### Kalman smoother (1D)")
+        st.caption("Smooth a short series (e.g. recent points scored) — teaching demo.")
+        series_txt = st.text_input("Comma-separated observations", value="21,17,24,14,28,20")
+        if st.button("Run Kalman"):
+            try:
+                series = [float(x.strip()) for x in series_txt.split(",") if x.strip()]
+                st.write(kalman_1d(series))
+            except Exception as ke:
+                st.error(str(ke))
+
+        st.markdown("#### Bayesian hierarchical Poisson")
+        st.caption(
+            "Gamma–Poisson conjugate updates + empirical-Bayes shrinkage of team rates toward the league mean. "
+            "Teaching model — not full MCMC Dixon–Coles."
+        )
+        try:
+            form_g2, _ = client.get_recent_form(team_key)
+            sc_list, al_list = rates_from_form_games(form_g2, team.get("name") or "")
+            if not sc_list:
+                sc_list = [1, 2, 0, 2, 1]
+                al_list = [1, 1, 2, 0, 2]
+            cgp1, cgp2 = st.columns(2)
+            with cgp1:
+                st.markdown("**Attack rate (scored)**")
+                st.write(gamma_poisson_update(sc_list, a_prior=2.0, b_prior=1.5))
+            with cgp2:
+                st.markdown("**Defense proxy (allowed)**")
+                st.write(gamma_poisson_update(al_list, a_prior=2.0, b_prior=1.5))
+
+            # Build mini league from form opponents for EB shrinkage
+            rate_map = {}
+            games_map = {}
+            tn = (team.get("name") or "").lower()
+            for g in form_g2 or []:
+                try:
+                    hs = float(g.get("home_score") or 0)
+                    as_ = float(g.get("away_score") or 0)
+                except Exception:
+                    continue
+                for label, pts in (
+                    (g.get("home_team") or "Home", hs),
+                    (g.get("away_team") or "Away", as_),
+                ):
+                    if not label:
+                        continue
+                    rate_map.setdefault(label, [])
+                    rate_map[label].append(pts)
+            team_rates = {k: sum(v)/len(v) for k, v in rate_map.items() if v}
+            team_games = {k: len(v) for k, v in rate_map.items()}
+            if team_rates:
+                eb = empirical_bayes_rates(team_rates, team_games)
+                st.markdown("**Empirical-Bayes shrunk rates** (observed → toward league μ)")
+                st.write({"mu": eb.get("mu"), "tau2": eb.get("tau2")})
+                # show top few
+                items = sorted(eb.get("teams", {}).items(), key=lambda kv: -kv[1].get("games", 0))[:8]
+                st.dataframe(
+                    [{"team": k, **v} for k, v in items],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+                # hierarchical match preview using selected team vs average
+                att = eb.get("teams", {}).get(team.get("name") or "", {})
+                # fallback first key
+                if not att and eb.get("teams"):
+                    att = list(eb["teams"].values())[0]
+                mu = float(eb.get("mu") or 1.2)
+                att_s = float(att.get("shrunk") or mu)
+                # defense ~ inverse-ish of scoring allowed mean
+                def_s = mu / max(0.3, att_s) if att_s else 1.0
+                prev = hierarchical_match_preview(att_s, mu, def_s, 1.0, home_advantage=1.08)
+                st.markdown("**Hierarchical match preview** (shrunk attack vs league-average opponent)")
+                st.write(prev)
+        except Exception as be:
+            st.warning("Bayesian Poisson block unavailable.")
+            if st.session_state.show_sources:
+                st.caption(str(be))
+    except Exception as e:
+        st.warning("Sandbox unavailable.")
+        if st.session_state.show_sources:
+            st.caption(str(e))
+
+
+with tabs[3]:
     st.markdown('<div class="section-title">Odds Detail</div>', unsafe_allow_html=True)
     try:
         if not odds_key:
@@ -326,7 +584,7 @@ with tabs[2]:
             st.caption(str(e))
 
 # ===== Watch =====
-with tabs[3]:
+with tabs[4]:
     st.markdown('<div class="section-title">Watch / Listen</div>', unsafe_allow_html=True)
     try:
         media = get_media_for_team(team_key, team.get("name") or "")
@@ -338,7 +596,7 @@ with tabs[3]:
         st.warning("Media directory unavailable.")
 
 # ===== News =====
-with tabs[4]:
+with tabs[5]:
     st.markdown('<div class="section-title">News</div>', unsafe_allow_html=True)
     try:
         arts, src = client.get_news(team_key, 14)
@@ -352,7 +610,7 @@ with tabs[4]:
         st.warning("News unavailable.")
 
 # ===== Standings =====
-with tabs[5]:
+with tabs[6]:
     st.markdown('<div class="section-title">Standings</div>', unsafe_allow_html=True)
     try:
         rows, src = client.get_standings(team_key)
@@ -365,7 +623,7 @@ with tabs[5]:
         st.warning("Standings error.")
 
 # ===== Schedule =====
-with tabs[6]:
+with tabs[7]:
     st.markdown('<div class="section-title">Schedule</div>', unsafe_allow_html=True)
     try:
         games, src = client.get_schedule(team_key)
@@ -379,7 +637,7 @@ with tabs[6]:
         st.warning("Schedule error.")
 
 # ===== Trends =====
-with tabs[7]:
+with tabs[8]:
     st.markdown('<div class="section-title">Trends</div>', unsafe_allow_html=True)
     try:
         form, src = client.get_recent_form(team_key)
@@ -404,7 +662,7 @@ with tabs[7]:
         st.warning("Trends error.")
 
 # ===== Leaders =====
-with tabs[8]:
+with tabs[9]:
     st.markdown('<div class="section-title">All-Time Leaders</div>', unsafe_allow_html=True)
     try:
         leaders, lsrc = get_all_time_leaders(team_key)
@@ -418,18 +676,24 @@ with tabs[8]:
         st.warning("Leaders error.")
 
 # ===== Greats =====
-with tabs[9]:
+with tabs[10]:
     st.markdown('<div class="section-title">Championship Greats</div>', unsafe_allow_html=True)
     try:
         greats, gsrc = get_championship_greats(team_key)
         for g in greats:
             st.markdown(f"**{g.get('player')}** · {g.get('era','')} — {g.get('titles','')} · _{g.get('why','')}_")
+        gnames = [g.get("player") for g in greats if g.get("player")]
+        if gnames:
+            gp = st.selectbox("Open player card", ["—"] + gnames, key="great_pick")
+            if gp and gp != "—":
+                st.session_state.selected_player = gp
+                st.info(f"Selected **{gp}** — open the Players tab for the full card.")
         src_note(gsrc)
     except Exception:
         st.warning("Greats error.")
 
 # ===== Players =====
-with tabs[10]:
+with tabs[11]:
     st.markdown('<div class="section-title">Player Cards</div>', unsafe_allow_html=True)
     try:
         roster, rsrc = get_roster(team_cfg)
@@ -462,7 +726,7 @@ with tabs[10]:
         st.warning("Player cards error.")
 
 # ===== Community =====
-with tabs[11]:
+with tabs[12]:
     st.markdown('<div class="section-title">Community</div>', unsafe_allow_html=True)
     st.caption("Topics bold · tags · votes · 100 posts/topic · safety filter. Backend: " + ("Supabase" if supabase_configured() else "local JSON failover"))
     user = st.session_state.username or "Fan"
@@ -526,7 +790,7 @@ with tabs[11]:
             st.caption(str(e))
 
 # ===== Desk Bot =====
-with tabs[12]:
+with tabs[13]:
     st.markdown('<div class="section-title">Cleveland Desk Bot</div>', unsafe_allow_html=True)
     st.caption("Friendly · Believeland slant · rule-based with failover lines.")
     if "chat_log" not in st.session_state:
@@ -541,7 +805,7 @@ with tabs[12]:
         st.markdown(f"**{'You' if who=='you' else 'Desk'}:** {text}")
 
 # ===== Moments =====
-with tabs[13]:
+with tabs[14]:
     st.markdown('<div class="section-title">Famous / Infamous Moments</div>', unsafe_allow_html=True)
     try:
         for m in moments_for(team_key, team.get("name") or ""):
@@ -551,7 +815,7 @@ with tabs[13]:
         st.warning("Moments unavailable.")
 
 # ===== Tickets =====
-with tabs[14]:
+with tabs[15]:
     st.markdown('<div class="section-title">Buy Tickets</div>', unsafe_allow_html=True)
     try:
         for t in ticket_links(team.get("name") or team.get("short") or ""):
@@ -560,7 +824,7 @@ with tabs[14]:
         st.warning("Ticket links unavailable.")
 
 # ===== Rushmore =====
-with tabs[15]:
+with tabs[16]:
     st.markdown('<div class="section-title">Fan Mount Rushmore</div>', unsafe_allow_html=True)
     pool = list(PLAYER_POOL.get(team_key, []) or ["Legend A", "Legend B", "Legend C", "Legend D"])
     while len(pool) < 4:
@@ -588,13 +852,63 @@ with tabs[15]:
                 st.caption(str(e))
 
 # ===== Markets =====
-with tabs[16]:
+
+with tabs[17]:
+    st.markdown('<div class="section-title">Hypothetical Bet Journal</div>', unsafe_allow_html=True)
+    st.caption("Track paper bets only — nothing is submitted to a book.")
+    try:
+        with st.form("journal_form"):
+            j1, j2, j3 = st.columns(3)
+            side = j1.text_input("Side / pick", value=team.get("short") or "")
+            odds = j2.number_input("American odds", value=-110, step=5)
+            stake = j3.number_input("Stake $", min_value=0.0, value=25.0, step=5.0)
+            note = st.text_input("Note / model (Kelly, Poisson, MC…)")
+            result = st.selectbox("Result", ["Open", "Win", "Loss", "Push"])
+            if st.form_submit_button("Add to journal"):
+                pnl = 0.0
+                from utils.betting_tools import american_to_decimal
+                dec = american_to_decimal(odds) or 0
+                if result == "Win" and dec:
+                    pnl = stake * (dec - 1)
+                elif result == "Loss":
+                    pnl = -stake
+                add_entry({
+                    "team": team.get("name"),
+                    "side": side,
+                    "odds": odds,
+                    "stake": stake,
+                    "note": note,
+                    "result": result,
+                    "pnl": round(pnl, 2),
+                })
+                st.success("Logged")
+        rows = list_entries(100)
+        st.write(summary_stats(rows))
+        if rows:
+            import pandas as pd
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.download_button(
+                "Download journal CSV",
+                data=to_csv(rows),
+                file_name="sosby_bet_journal.csv",
+                mime="text/csv",
+            )
+        if st.button("Clear journal"):
+            clear_all()
+            st.rerun()
+    except Exception as e:
+        st.warning("Journal unavailable.")
+        if st.session_state.show_sources:
+            st.caption(str(e))
+
+
+with tabs[18]:
     st.markdown('<div class="section-title">Prediction Markets</div>', unsafe_allow_html=True)
     for l in client.prediction_links(team_key):
         st.markdown(f"**[{l['name']}]({l['url']})** — {l['desc']}")
 
 # ===== Alerts / Twilio =====
-with tabs[17]:
+with tabs[19]:
     st.markdown('<div class="section-title">Alerts & Twilio SMS</div>', unsafe_allow_html=True)
     st.markdown(SETUP_HELP)
     st.write("Twilio configured:" , "✅" if twilio_configured() else "❌ (add secrets)")
