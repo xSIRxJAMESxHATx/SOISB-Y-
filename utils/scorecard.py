@@ -1,31 +1,73 @@
-"""Beautiful, overflow-safe score cards + clean score formatting."""
+"""
+Central score formatting + beautiful score cards.
+
+All score display paths should call format_score() so ESPN dict scores,
+TSDB ints, and strings render as clean numbers.
+"""
 from __future__ import annotations
 from html import escape
-from typing import Any, Optional
+from typing import Any
+
+
+def unwrap_score(val: Any) -> Any:
+    """Peel ESPN/TSDB nested score containers down to a scalar."""
+    seen = 0
+    while seen < 4:
+        seen += 1
+        if val is None or val == "" or val == "–":
+            return None
+        if isinstance(val, dict):
+            next_v = None
+            for k in (
+                "displayValue", "value", "score", "runs", "goals", "points",
+                "display", "text", "actual",
+            ):
+                if val.get(k) is not None and val.get(k) != "":
+                    next_v = val.get(k)
+                    break
+            if next_v is None:
+                return None
+            val = next_v
+            continue
+        if isinstance(val, (list, tuple)) and val:
+            val = val[0]
+            continue
+        return val
+    return None
 
 
 def format_score(val: Any) -> str:
-    if val is None or val == "" or val == "–":
+    """Normalize any score-like value to a tight display string."""
+    scalar = unwrap_score(val)
+    if scalar is None:
         return "–"
     try:
-        f = float(str(val).strip().replace(",", ""))
+        f = float(str(scalar).strip().replace(",", ""))
         if f == int(f):
             return str(int(f))
         return f"{f:.1f}".rstrip("0").rstrip(".")
     except Exception:
-        s = str(val).strip()
-        return s[:8] if s else "–"
+        s = str(scalar).strip()
+        if not s or s.startswith("{") or s.startswith("["):
+            return "–"
+        return s[:8]
+
+
+def format_score_pair(away: Any, home: Any) -> str:
+    return f"{format_score(away)}–{format_score(home)}"
 
 
 def short_status(text: Any, limit: int = 28) -> str:
     s = " ".join(str(text or "").split())
+    if s.startswith("{") or s.startswith("["):
+        return ""
     if len(s) <= limit:
         return s
     return s[: limit - 1] + "…"
 
 
 def render_score_card(game: dict) -> str:
-    """Return self-contained HTML for one game card."""
+    """Overflow-safe HTML score card with logos when present."""
     st_state = (game.get("status_state") or "").lower()
     live = st_state == "in"
     is_final = st_state in ("post", "final") or "final" in str(game.get("status") or "").lower()
@@ -41,7 +83,6 @@ def render_score_card(game: dict) -> str:
     home_s = format_score(game.get("home_score"))
     away_n = short_status(game.get("away_team") or "Away", 22)
     home_n = short_status(game.get("home_team") or "Home", 22)
-
     away_logo = game.get("away_logo") or ""
     home_logo = game.get("home_logo") or ""
 
@@ -74,7 +115,3 @@ def render_score_card(game: dict) -> str:
         f'<div class="score-meta">{escape(meta)}</div>'
         f'</div>'
     )
-
-
-def format_score_pair(away: Any, home: Any) -> str:
-    return f"{format_score(away)}–{format_score(home)}"

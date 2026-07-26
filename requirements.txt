@@ -12,3 +12,4 @@ websocket-client>=1.7.0
 Pillow>=10.0.0
 numpy>=1.24.0
 fpdf2>=2.7.0
+# redis>=5.0.0  # optional — set REDIS_URL to enable

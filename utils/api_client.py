@@ -219,98 +219,6 @@ TEAMS: Dict[str, dict] = {
         },
         "prediction_query": "Team USA basketball",
     },
-    "rhs_football": {
-        "name": "Reynoldsburg Raiders Football",
-        "short": "Raiders FB",
-        "sport": "football",
-        "league": "high-school",
-        "espn_id": "",
-        "espn_path": "football/college-football",
-        "thesportsdb_id": "",
-        "odds_sport_key": "",
-        "odds_team": "Reynoldsburg",
-        "colors": {
-            "primary": "#4B2E83",
-            "secondary": "#C5A000",
-            "accent": "#FFFFFF",
-            "light_bg": "#F8F5FC",
-            "light_card": "#FCFAFE",
-            "dark_bg": "#140F1C",
-            "dark_card": "#221A2E",
-        },
-        "prediction_query": "Reynoldsburg Raiders football",
-        "hs": True,
-        "search_name": "Reynoldsburg",
-        "mascot": "Raiders",
-    },
-    "rhs_mbb": {
-        "name": "Reynoldsburg Raiders Boys Basketball",
-        "short": "Raiders BB",
-        "sport": "basketball",
-        "league": "high-school",
-        "espn_id": "",
-        "espn_path": "basketball/mens-college-basketball",
-        "thesportsdb_id": "",
-        "odds_sport_key": "",
-        "odds_team": "Reynoldsburg",
-        "colors": {
-            "primary": "#4B2E83",
-            "secondary": "#C5A000",
-            "accent": "#FFFFFF",
-            "light_bg": "#F8F5FC",
-            "light_card": "#FCFAFE",
-            "dark_bg": "#140F1C",
-            "dark_card": "#221A2E",
-        },
-        "prediction_query": "Reynoldsburg Raiders basketball",
-        "hs": True,
-        "search_name": "Reynoldsburg",
-        "mascot": "Raiders",
-    },
-    "tiffin_tf": {
-        "name": "Tiffin University Men's Track & Field",
-        "short": "Tiffin Track",
-        "sport": "track-and-field",
-        "league": "ncaa-d2",
-        "espn_id": "",
-        "espn_path": "trackandfield/ncaa",
-        "thesportsdb_id": "",
-        "odds_sport_key": "",
-        "odds_team": "Tiffin",
-        "colors": {
-            "primary": "#4E2A84",
-            "secondary": "#C5B358",
-            "accent": "#FFFFFF",
-            "light_bg": "#F8F5FC",
-            "light_card": "#FCFAFE",
-            "dark_bg": "#140F1C",
-            "dark_card": "#221A2E",
-        },
-        "prediction_query": "Tiffin University track field",
-        "hs": True,
-        "search_name": "Tiffin",
-    },
-    "kent_mbb": {
-        "name": "Kent State Men's Basketball",
-        "short": "Kent State BB",
-        "sport": "basketball",
-        "league": "mens-college-basketball",
-        "espn_id": "2309",
-        "espn_path": "basketball/mens-college-basketball",
-        "thesportsdb_id": "134942",
-        "odds_sport_key": "basketball_ncaab",
-        "odds_team": "Kent State",
-        "colors": {
-            "primary": "#002664",
-            "secondary": "#EAAB00",
-            "accent": "#FFFFFF",
-            "light_bg": "#F5F8FC",
-            "light_card": "#FAFCFF",
-            "dark_bg": "#0A1520",
-            "dark_card": "#122030",
-        },
-        "prediction_query": "Kent State basketball",
-    },
 }
 
 ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports"
@@ -362,10 +270,6 @@ REDDIT_SUBS = {
     "bluejackets": "https://www.reddit.com/r/BlueJackets/",
     "usmnt": "https://www.reddit.com/r/ussoccer/",
     "usab": "https://www.reddit.com/r/usabasketball/",
-    "kent_mbb": "https://www.reddit.com/r/KentState/",
-    "rhs_football": "https://www.reddit.com/r/highschoolfootball/",
-    "rhs_mbb": "https://www.reddit.com/r/Basketball/",
-    "tiffin_tf": "https://www.reddit.com/r/trackandfield/",
 }
 
 
@@ -379,33 +283,6 @@ def reddit_url(team_key: str) -> str:
 
 # Local-only cards for programs without stable ESPN IDs
 LOCAL_PROGRAMS = {
-    "rhs_football": {
-        "label": "Reynoldsburg Raiders Football",
-        "note": "OHSAA / OCC — purple & gold. Live scores via local/NFHS sources when in season.",
-        "links": [
-            ("NFHS Network", "https://www.nfhsnetwork.com/"),
-            ("MaxPreps search", "https://www.maxpreps.com/search/default.aspx?type=school&search=reynoldsburg&state=oh"),
-            ("Google schedule", "https://www.google.com/search?q=Reynoldsburg+Raiders+football+schedule"),
-        ],
-    },
-    "rhs_mbb": {
-        "label": "Reynoldsburg Raiders Boys Basketball",
-        "note": "OHSAA boys basketball — purple & gold Raiders.",
-        "links": [
-            ("NFHS Network", "https://www.nfhsnetwork.com/"),
-            ("MaxPreps search", "https://www.maxpreps.com/search/default.aspx?type=school&search=reynoldsburg&state=oh"),
-            ("Google schedule", "https://www.google.com/search?q=Reynoldsburg+Raiders+basketball+schedule"),
-        ],
-    },
-    "tiffin_tf": {
-        "label": "Tiffin University Men's Track & Field",
-        "note": "NCAA DII / G-MAC — Dragons track & field. Meets populate seasonally.",
-        "links": [
-            ("Tiffin Athletics", "https://gotiffindragons.com/"),
-            ("TFRRS search", "https://www.tfrrs.org/"),
-            ("Google schedule", "https://www.google.com/search?q=Tiffin+University+track+and+field+schedule"),
-        ],
-    },
 }
 
 
@@ -423,7 +300,7 @@ def local_program_rows(team_key: str, kind: str = "schedule") -> List[dict]:
 
     # MaxPreps enrichment for OH high schools
     mp_rows: List[dict] = []
-    if team_key.startswith("rhs_"):
+    if False:  # HS programs removed
         try:
             from .maxpreps import as_schedule_rows, as_standings_rows
             if kind == "standings":
@@ -527,10 +404,18 @@ class SportsAPIClient:
             ts, data, ttl = hit
             if (time.time() - ts) < ttl:
                 return data
+        # redis layer (optional)
+        try:
+            from .redis_cache import redis_get
+            data = redis_get(key)
+            if data is not None:
+                self._cache[key] = (time.time(), data, self.cache_ttl)
+                return data
+        except Exception:
+            pass
         # disk layer
         try:
             from .disk_cache import disk_get
-            # use longest relevant default for disk
             disk_ttl = self.schedule_ttl
             if key.startswith("sb:"):
                 disk_ttl = self.live_cache_ttl
@@ -550,6 +435,11 @@ class SportsAPIClient:
         use_ttl = float(ttl if ttl is not None else self.cache_ttl)
         self._cache[key] = (time.time(), data, use_ttl)
         try:
+            from .redis_cache import redis_set
+            redis_set(key, data, use_ttl)
+        except Exception:
+            pass
+        try:
             from .disk_cache import disk_set
             disk_set(key, data)
         except Exception:
@@ -557,6 +447,11 @@ class SportsAPIClient:
 
     def clear_cache(self) -> None:
         self._cache.clear()
+        try:
+            from .redis_cache import redis_clear_prefix
+            redis_clear_prefix()
+        except Exception:
+            pass
         try:
             from .disk_cache import disk_clear
             disk_clear()
@@ -672,17 +567,14 @@ class SportsAPIClient:
         state = (status.get("state") or "pre").lower()
         # scores
         def _score(c):
-            s = c.get("score")
-            if s is None or s == "":
-                return "–"
             try:
-                # clean "3.0" / "03" -> "3"
-                f = float(str(s).strip())
-                if f == int(f):
-                    return str(int(f))
-                return str(f)
+                from .scorecard import format_score
+                return format_score(c.get("score"))
             except Exception:
-                return str(s).strip()
+                s = c.get("score")
+                if isinstance(s, dict):
+                    s = s.get("displayValue") or s.get("value")
+                return "–" if s is None or s == "" else str(s)
         venue = _safe_get(comp, "venue", "fullName") or _safe_get(ev, "venue", "fullName") or ""
         broadcasts = []
         for b in (comp.get("broadcasts") or []):
@@ -708,7 +600,7 @@ class SportsAPIClient:
             "detail": status.get("detail") or status.get("shortDetail") or "",
             "home_team": _safe_get(home, "team", "displayName", default="Home") or "Home",
             "home_score": _score(home),
-            "home_logo": _safe_get(home, "team", "logo"),
+            "home_logo": _safe_get(home, "team", "logo") or _safe_get(home, "team", "logos", 0, "href"),
             "away_team": _safe_get(away, "team", "displayName", default="Away") or "Away",
             "away_score": _score(away),
             "away_logo": _safe_get(away, "team", "logo"),
@@ -720,6 +612,11 @@ class SportsAPIClient:
 
     def _norm_tsdb_event(self, e: dict) -> dict:
         """Normalize TheSportsDB event."""
+        try:
+            from .scorecard import format_score as _fs
+        except Exception:
+            def _fs(v):
+                return "–" if v is None or v == "" else str(v)
         e = e or {}
         home_s = e.get("intHomeScore")
         away_s = e.get("intAwayScore")
@@ -742,14 +639,10 @@ class SportsAPIClient:
             "status_state": state,
             "detail": e.get("strTime") or e.get("strVenue") or "",
             "home_team": e.get("strHomeTeam") or "Home",
-            "home_score": (
-                str(int(float(home_s))) if home_s is not None and str(home_s) != "" else "–"
-            ),
+            "home_score": _fs(home_s),
             "home_logo": e.get("strHomeTeamBadge"),
             "away_team": e.get("strAwayTeam") or "Away",
-            "away_score": (
-                str(int(float(away_s))) if away_s is not None and str(away_s) != "" else "–"
-            ),
+            "away_score": _fs(away_s),
             "away_logo": e.get("strAwayTeamBadge"),
             "venue": e.get("strVenue") or "",
             "broadcast": e.get("strCountry") or None,

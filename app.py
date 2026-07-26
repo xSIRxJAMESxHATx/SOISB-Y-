@@ -57,7 +57,7 @@ from utils.bayes_poisson import (
 )
 
 
-st.set_page_config(page_title="SO!SB!Y!", page_icon="🦉", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="SO!SB!Y!", page_icon="assets/favicon.png", layout="wide", initial_sidebar_state="expanded")
 
 # Inject Twilio + mod secrets into env for helper modules
 for key in ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER", "MOD_PASSWORD", "ODDS_API_KEY", "SUPABASE_URL", "SUPABASE_KEY", "SUPABASE_ANON_KEY"):
@@ -116,6 +116,33 @@ with st.sidebar:
 
 team_key = st.session_state.team_key
 inject_css(team_key, st.session_state.dark_mode)
+
+# —— Superb Owl brand bar ——
+try:
+    from utils.branding import logo_path as _owl_logo_path
+    _op = _owl_logo_path()
+    if _op.exists():
+        b1, b2 = st.columns([1, 5])
+        with b1:
+            st.image(str(_op), width=88)
+        with b2:
+            st.markdown(
+                f"<div class='sbsby-banner' style='padding:0.6rem 0'>"
+                f"<h1 style='margin:0'>Superb Owl! Super Browns! Yeah!</h1>"
+                f"<div style='opacity:0.85;font-weight:600'>SO!SB!Y! · Cleveland’s Champ</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+except Exception:
+    pass
+
+# Superb Owl logo in header
+try:
+    _logo = logo_path()
+    if _logo.exists():
+        st.session_state["_owl_logo"] = str(_logo)
+except Exception:
+    pass
 
 if st.session_state.auto_refresh and st_autorefresh:
     st_autorefresh(interval=int(st.session_state.refresh_sec) * 1000, key="sbsby_auto")
@@ -258,10 +285,11 @@ if info.get("logo"):
         pass
 
 tabs = st.tabs([
-    "🏈 Scores + Weather", "🎰 Betting HQ", "🧪 Sandbox", "💰 Odds", "📺 Watch", "📰 News",
+    "🏈 Scores + Weather", "🎰 Betting HQ", "🧪 Sandbox", "💰 Odds",
+    "📒 Journal", "🎯 Markets", "📺 Watch", "📰 News",
     "📊 Standings", "📅 Schedule", "📈 Trends", "🏆 Leaders", "⭐ Greats",
     "👤 Players", "💬 Community", "🤖 Desk Bot", "🎬 Moments", "🎫 Tickets",
-    "🗻 Rushmore", "📒 Journal", "🎯 Markets", "🔔 Alerts / SMS",
+    "🗻 Rushmore", "🔔 Alerts / SMS",
 ])
 
 # ===== Scores + Weather =====
@@ -613,6 +641,61 @@ with tabs[3]:
 
 # ===== Watch =====
 with tabs[4]:
+    st.markdown('<div class="section-title">Hypothetical Bet Journal</div>', unsafe_allow_html=True)
+    st.caption("Track paper bets only — nothing is submitted to a book.")
+    try:
+        with st.form("journal_form"):
+            j1, j2, j3 = st.columns(3)
+            side = j1.text_input("Side / pick", value=team.get("short") or "")
+            odds = j2.number_input("American odds", value=-110, step=5)
+            stake = j3.number_input("Stake $", min_value=0.0, value=25.0, step=5.0)
+            note = st.text_input("Note / model (Kelly, Poisson, MC…)")
+            result = st.selectbox("Result", ["Open", "Win", "Loss", "Push"])
+            if st.form_submit_button("Add to journal"):
+                pnl = 0.0
+                from utils.betting_tools import american_to_decimal
+                dec = american_to_decimal(odds) or 0
+                if result == "Win" and dec:
+                    pnl = stake * (dec - 1)
+                elif result == "Loss":
+                    pnl = -stake
+                add_entry({
+                    "team": team.get("name"),
+                    "side": side,
+                    "odds": odds,
+                    "stake": stake,
+                    "note": note,
+                    "result": result,
+                    "pnl": round(pnl, 2),
+                })
+                st.success("Logged")
+        rows = list_entries(100)
+        st.write(summary_stats(rows))
+        if rows:
+            import pandas as pd
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.download_button(
+                "Download journal CSV",
+                data=to_csv(rows),
+                file_name="sosby_bet_journal.csv",
+                mime="text/csv",
+            )
+        if st.button("Clear journal"):
+            clear_all()
+            st.rerun()
+    except Exception as e:
+        st.warning("Journal unavailable.")
+        if st.session_state.show_sources:
+            st.caption(str(e))
+
+
+with tabs[5]:
+    st.markdown('<div class="section-title">Prediction Markets</div>', unsafe_allow_html=True)
+    for l in client.prediction_links(team_key):
+        st.markdown(f"**[{l['name']}]({l['url']})** — {l['desc']}")
+
+# ===== Alerts / Twilio =====
+with tabs[6]:
     st.markdown('<div class="section-title">Watch / Listen</div>', unsafe_allow_html=True)
     try:
         media = get_media_for_team(team_key, team.get("name") or "")
@@ -624,7 +707,7 @@ with tabs[4]:
         st.warning("Media directory unavailable.")
 
 # ===== News =====
-with tabs[5]:
+with tabs[7]:
     st.markdown('<div class="section-title">News</div>', unsafe_allow_html=True)
     st.caption(f"Headlines for **{team.get('name')}** only")
     try:
@@ -643,7 +726,7 @@ with tabs[5]:
             st.caption(str(e))
 
 # ===== Standings =====
-with tabs[6]:
+with tabs[8]:
     st.markdown('<div class="section-title">Standings</div>', unsafe_allow_html=True)
     st.caption(f"League table context for **{team.get('name')}** · prior seasons if current empty")
     try:
@@ -673,7 +756,7 @@ with tabs[6]:
             st.caption(str(e))
 
 # ===== Schedule =====
-with tabs[7]:
+with tabs[9]:
     st.markdown('<div class="section-title">Schedule</div>', unsafe_allow_html=True)
     st.caption(f"Ordered schedule for **{team.get('name')}** — date, matchup, venue, result")
     try:
@@ -707,7 +790,7 @@ with tabs[7]:
             st.caption(str(e))
 
 # ===== Trends =====
-with tabs[8]:
+with tabs[10]:
     st.markdown('<div class="section-title">Trends</div>', unsafe_allow_html=True)
     st.caption(f"Recent form for **{team.get('name')}** only · all-time markers if live form empty")
     try:
@@ -754,7 +837,7 @@ with tabs[8]:
             st.caption(str(e))
 
 # ===== Leaders =====
-with tabs[9]:
+with tabs[11]:
     st.markdown('<div class="section-title">All-Time Leaders</div>', unsafe_allow_html=True)
     try:
         leaders, lsrc = get_all_time_leaders(team_key)
@@ -768,7 +851,7 @@ with tabs[9]:
         st.warning("Leaders error.")
 
 # ===== Greats =====
-with tabs[10]:
+with tabs[12]:
     st.markdown('<div class="section-title">Championship Greats</div>', unsafe_allow_html=True)
     try:
         greats, gsrc = get_championship_greats(team_key)
@@ -785,7 +868,7 @@ with tabs[10]:
         st.warning("Greats error.")
 
 # ===== Players =====
-with tabs[11]:
+with tabs[13]:
     st.markdown('<div class="section-title">Player Cards</div>', unsafe_allow_html=True)
     try:
         roster, rsrc = get_roster(team_cfg)
@@ -818,7 +901,7 @@ with tabs[11]:
         st.warning("Player cards error.")
 
 # ===== Community =====
-with tabs[12]:
+with tabs[14]:
     st.markdown('<div class="section-title">Community</div>', unsafe_allow_html=True)
     st.caption("Topics bold · tags · votes · 100 posts/topic · safety filter. Backend: " + ("Supabase" if supabase_configured() else "local JSON failover"))
     user = st.session_state.username or "Fan"
@@ -882,7 +965,7 @@ with tabs[12]:
             st.caption(str(e))
 
 # ===== Desk Bot =====
-with tabs[13]:
+with tabs[15]:
     st.markdown('<div class="section-title">Cleveland Desk Bot</div>', unsafe_allow_html=True)
     st.caption("Friendly · Believeland slant · rule-based with failover lines.")
     if "chat_log" not in st.session_state:
@@ -897,7 +980,7 @@ with tabs[13]:
         st.markdown(f"**{'You' if who=='you' else 'Desk'}:** {text}")
 
 # ===== Moments =====
-with tabs[14]:
+with tabs[16]:
     st.markdown('<div class="section-title">Famous / Infamous Moments</div>', unsafe_allow_html=True)
     try:
         for m in moments_for(team_key, team.get("name") or ""):
@@ -907,7 +990,7 @@ with tabs[14]:
         st.warning("Moments unavailable.")
 
 # ===== Tickets =====
-with tabs[15]:
+with tabs[17]:
     st.markdown('<div class="section-title">Buy Tickets</div>', unsafe_allow_html=True)
     try:
         for t in ticket_links(team.get("name") or team.get("short") or ""):
@@ -916,7 +999,7 @@ with tabs[15]:
         st.warning("Ticket links unavailable.")
 
 # ===== Rushmore =====
-with tabs[16]:
+with tabs[18]:
     st.markdown('<div class="section-title">Fan Mount Rushmore</div>', unsafe_allow_html=True)
     pool = list(PLAYER_POOL.get(team_key, []) or ["Legend A", "Legend B", "Legend C", "Legend D"])
     while len(pool) < 4:
@@ -949,61 +1032,6 @@ with tabs[16]:
 
 # ===== Markets =====
 
-with tabs[17]:
-    st.markdown('<div class="section-title">Hypothetical Bet Journal</div>', unsafe_allow_html=True)
-    st.caption("Track paper bets only — nothing is submitted to a book.")
-    try:
-        with st.form("journal_form"):
-            j1, j2, j3 = st.columns(3)
-            side = j1.text_input("Side / pick", value=team.get("short") or "")
-            odds = j2.number_input("American odds", value=-110, step=5)
-            stake = j3.number_input("Stake $", min_value=0.0, value=25.0, step=5.0)
-            note = st.text_input("Note / model (Kelly, Poisson, MC…)")
-            result = st.selectbox("Result", ["Open", "Win", "Loss", "Push"])
-            if st.form_submit_button("Add to journal"):
-                pnl = 0.0
-                from utils.betting_tools import american_to_decimal
-                dec = american_to_decimal(odds) or 0
-                if result == "Win" and dec:
-                    pnl = stake * (dec - 1)
-                elif result == "Loss":
-                    pnl = -stake
-                add_entry({
-                    "team": team.get("name"),
-                    "side": side,
-                    "odds": odds,
-                    "stake": stake,
-                    "note": note,
-                    "result": result,
-                    "pnl": round(pnl, 2),
-                })
-                st.success("Logged")
-        rows = list_entries(100)
-        st.write(summary_stats(rows))
-        if rows:
-            import pandas as pd
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-            st.download_button(
-                "Download journal CSV",
-                data=to_csv(rows),
-                file_name="sosby_bet_journal.csv",
-                mime="text/csv",
-            )
-        if st.button("Clear journal"):
-            clear_all()
-            st.rerun()
-    except Exception as e:
-        st.warning("Journal unavailable.")
-        if st.session_state.show_sources:
-            st.caption(str(e))
-
-
-with tabs[18]:
-    st.markdown('<div class="section-title">Prediction Markets</div>', unsafe_allow_html=True)
-    for l in client.prediction_links(team_key):
-        st.markdown(f"**[{l['name']}]({l['url']})** — {l['desc']}")
-
-# ===== Alerts / Twilio =====
 with tabs[19]:
     st.markdown('<div class="section-title">Alerts & Twilio SMS</div>', unsafe_allow_html=True)
     st.markdown(SETUP_HELP)

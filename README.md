@@ -84,3 +84,17 @@ HS / track (Reynoldsburg, Tiffin): curated program hubs + MaxPreps/NFHS/TFRRS li
 ## Team lock
 
 Scoreboard/schedule matching uses **ESPN team id first**. Name matching uses distinctive tokens only (blocks generic words like "Football").
+
+
+## Score formatting fix
+
+ESPN competitor `score` may be a string **or** `{"value": "3", "displayValue": "3"}`.
+`format_score()` / `_norm_espn_event` unwrap both so the UI never shows `{'value'}`.
+
+## Optional Redis
+
+Set `REDIS_URL` in secrets to enable a shared cache layer. Without it, memory + disk cache still work.
+
+## Teams
+
+Removed: Reynoldsburg, Tiffin Track, Kent State (local/HS focus dropped for reliability).

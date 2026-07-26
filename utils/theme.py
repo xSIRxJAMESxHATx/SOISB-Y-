@@ -31,6 +31,24 @@ def build_css(team_key: str, dark: bool = False) -> str:
     }}
     .stApp {{ background: {bg} !important; }}
     #MainMenu, footer, header {{ visibility: hidden; }}
+    .owl-banner-logo {
+        width: 72px;
+        height: 72px;
+        object-fit: contain;
+        border-radius: 14px;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+        border: 2px solid {secondary};
+        background: {card};
+    }
+    .owl-banner-logo {{
+        width: 72px;
+        height: 72px;
+        object-fit: contain;
+        border-radius: 14px;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+        border: 2px solid {secondary};
+        background: {card};
+    }}
     .sbsby-banner {{
         background: {header_grad};
         color: {accent};
@@ -73,6 +91,7 @@ def build_css(team_key: str, dark: bool = False) -> str:
     .sbsby-card {{
         background: {card};
         border: 1px solid {border};
+        border-left: 4px solid {primary};
         border-radius: 14px;
         padding: 1.1rem 1.2rem;
         margin-bottom: 0.85rem;
