@@ -31,15 +31,6 @@ def build_css(team_key: str, dark: bool = False) -> str:
     }}
     .stApp {{ background: {bg} !important; }}
     #MainMenu, footer, header {{ visibility: hidden; }}
-    .owl-banner-logo {
-        width: 72px;
-        height: 72px;
-        object-fit: contain;
-        border-radius: 14px;
-        box-shadow: 0 4px 14px rgba(0,0,0,0.25);
-        border: 2px solid {secondary};
-        background: {card};
-    }
     .owl-banner-logo {{
         width: 72px;
         height: 72px;
