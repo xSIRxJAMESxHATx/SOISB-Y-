@@ -57,7 +57,7 @@ from utils.bayes_poisson import (
 )
 
 
-st.set_page_config(page_title="SO!SB!Y!", page_icon="assets/favicon.png", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="SO!SB!Y!", page_icon="🦉", layout="wide", initial_sidebar_state="expanded")
 
 # Inject Twilio + mod secrets into env for helper modules
 for key in ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER", "MOD_PASSWORD", "ODDS_API_KEY", "SUPABASE_URL", "SUPABASE_KEY", "SUPABASE_ANON_KEY"):
@@ -116,33 +116,6 @@ with st.sidebar:
 
 team_key = st.session_state.team_key
 inject_css(team_key, st.session_state.dark_mode)
-
-# —— Superb Owl brand bar ——
-try:
-    from utils.branding import logo_path as _owl_logo_path
-    _op = _owl_logo_path()
-    if _op.exists():
-        b1, b2 = st.columns([1, 5])
-        with b1:
-            st.image(str(_op), width=88)
-        with b2:
-            st.markdown(
-                f"<div class='sbsby-banner' style='padding:0.6rem 0'>"
-                f"<h1 style='margin:0'>Superb Owl! Super Browns! Yeah!</h1>"
-                f"<div style='opacity:0.85;font-weight:600'>SO!SB!Y! · Cleveland’s Champ</div>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
-except Exception:
-    pass
-
-# Superb Owl logo in header
-try:
-    _logo = logo_path()
-    if _logo.exists():
-        st.session_state["_owl_logo"] = str(_logo)
-except Exception:
-    pass
 
 if st.session_state.auto_refresh and st_autorefresh:
     st_autorefresh(interval=int(st.session_state.refresh_sec) * 1000, key="sbsby_auto")
