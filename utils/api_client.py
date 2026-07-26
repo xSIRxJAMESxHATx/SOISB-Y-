@@ -330,7 +330,33 @@ def _safe_get(d: Any, *keys, default=None):
     return cur
 
 
+REDDIT_SUBS = {
+    "browns": "https://www.reddit.com/r/Browns/",
+    "guardians": "https://www.reddit.com/r/ClevelandGuardians/",
+    "cavaliers": "https://www.reddit.com/r/clevelandcavs/",
+    "osu_football": "https://www.reddit.com/r/OhioStateFootball/",
+    "osu_mbb": "https://www.reddit.com/r/OhioStateBasketball/",
+    "crew": "https://www.reddit.com/r/columbuscrew/",
+    "bluejackets": "https://www.reddit.com/r/BlueJackets/",
+    "usmnt": "https://www.reddit.com/r/ussoccer/",
+    "usab": "https://www.reddit.com/r/usabasketball/",
+    "kent_mbb": "https://www.reddit.com/r/KentState/",
+    "rhs_football": "https://www.reddit.com/r/highschoolfootball/",
+    "rhs_mbb": "https://www.reddit.com/r/Basketball/",
+    "tiffin_tf": "https://www.reddit.com/r/trackandfield/",
+}
+
+
+def reddit_url(team_key: str) -> str:
+    return REDDIT_SUBS.get(team_key) or (
+        "https://www.reddit.com/search/?q=" + quote_plus(
+            (TEAMS.get(team_key) or {}).get("name") or team_key
+        )
+    )
+
+
 class SportsAPIClient:
+
     """Multi-source client with cache, retries, and missing-data safety."""
 
     def __init__(self, timeout: float = 8.0, cache_ttl: float = 35.0):
@@ -622,43 +648,97 @@ class SportsAPIClient:
 
     # ---- News ----
     def get_news(self, team_key: str, limit: int = 12) -> Tuple[List[dict], str]:
+        """Team-only news + matching team description."""
         if team_key not in TEAMS:
             return [], "unknown-team"
         team = TEAMS[team_key]
         cache_key = f"news:{team_key}:{limit}"
-        needles = [
-            (team.get("name") or "").lower(),
-            (team.get("short") or "").lower(),
-            (team.get("odds_team") or "").lower(),
-            (team.get("search_name") or "").lower(),
-        ]
-        needles = [n for n in needles if n and len(n) > 2]
+        needles = []
+        for k in ("name", "short", "odds_team", "search_name", "mascot"):
+            v = (team.get(k) or "").lower().strip()
+            if v and len(v) > 2 and v not in needles:
+                needles.append(v)
+        # token needles (e.g. "Guardians" from full name)
+        for part in (team.get("name") or "").lower().split():
+            if len(part) > 3 and part not in needles:
+                needles.append(part)
 
-        def _team_relevant(headline: str, description: str = "") -> bool:
+        def _relevant(headline: str, description: str = "") -> bool:
             text = f"{headline} {description}".lower()
-            if not needles:
-                return True
-            return any(n in text for n in needles)
+            return any(n in text for n in needles) if needles else True
 
-        def espn_team_news() -> Optional[List[dict]]:
-            # Prefer team-specific ESPN news endpoint when id exists
+        def team_description_card() -> List[dict]:
+            """Always-available selected-team blurb from ESPN / TheSportsDB."""
+            cards = []
             tid = team.get("espn_id") or ""
             path = team.get("espn_path") or ""
+            try:
+                if tid and path:
+                    data = self._request(f"{ESPN_BASE}/{path}/teams/{tid}")
+                    t0 = data.get("team") or {}
+                    desc = (t0.get("standingSummary") or "")
+                    rec = ""
+                    for item in t0.get("record", {}).get("items") or []:
+                        if item.get("description") == "Overall Summary" or item.get("type") == "total":
+                            rec = item.get("summary") or ""
+                            break
+                    cards.append({
+                        "headline": f"{t0.get('displayName') or team.get('name')} — team page",
+                        "description": (desc or f"Record {rec}".strip()) or f"Official ESPN profile for {team.get('name')}.",
+                        "published": "",
+                        "url": f"https://www.espn.com/{path.split('/')[-1]}/team/_/id/{tid}" if tid else "#",
+                        "image": (t0.get("logos") or [{}])[0].get("href"),
+                        "source": "ESPN team",
+                    })
+            except Exception:
+                pass
+            try:
+                tsid = team.get("thesportsdb_id") or ""
+                if tsid:
+                    data = self._request(f"{THESPORTSDB_BASE}/lookupteam.php", {"id": tsid})
+                    t0 = (data.get("teams") or [None])[0] or {}
+                    if t0:
+                        cards.append({
+                            "headline": f"{t0.get('strTeam') or team.get('name')} — club description",
+                            "description": (t0.get("strDescriptionEN") or "")[:400],
+                            "published": "",
+                            "url": t0.get("strWebsite") or "#",
+                            "image": t0.get("strTeamBadge") or t0.get("strTeamLogo"),
+                            "source": "TheSportsDB",
+                        })
+            except Exception:
+                pass
+            if not cards:
+                cards.append({
+                    "headline": f"{team.get('name')} — SO!SB!Y! hub",
+                    "description": f"Team hub for {team.get('name')} ({team.get('short')}). Switch teams anytime from the banner.",
+                    "published": "",
+                    "url": "#",
+                    "image": None,
+                    "source": "SO!SB!Y!",
+                })
+            return cards
+
+        def espn_team_news() -> Optional[List[dict]]:
+            tid = team.get("espn_id") or ""
+            path = team.get("espn_path") or ""
+            out: List[dict] = []
             urls = []
             if tid and path:
                 urls.append(f"{ESPN_BASE}/{path}/teams/{tid}/news")
-            urls.append(f"{ESPN_BASE}/{path}/news")
-            out: List[dict] = []
             for url in urls:
-                data = self._request(url, {"limit": max(limit * 3, 20)})
-                if not data:
+                try:
+                    data = self._request(url, {"limit": max(limit * 2, 15)})
+                except Exception:
                     continue
                 for a in data.get("articles") or []:
                     h = a.get("headline") or ""
                     d = a.get("description") or ""
-                    # team endpoint already scoped; league feed must match name
-                    if "teams/" not in url and not _team_relevant(h, d):
-                        continue
+                    # still require relevance for safety
+                    if needles and not _relevant(h, d):
+                        # team endpoint is usually OK — allow if team id path
+                        if "/teams/" not in url:
+                            continue
                     out.append({
                         "headline": h or "Headline",
                         "description": d,
@@ -671,59 +751,85 @@ class SportsAPIClient:
                         return out
             return out[:limit] if out else None
 
-        def thesportsdb_news() -> Optional[List[dict]]:
-            tid = team.get("thesportsdb_id") or ""
-            if not tid:
+        def espn_league_filtered() -> Optional[List[dict]]:
+            path = team.get("espn_path") or ""
+            try:
+                data = self._request(f"{ESPN_BASE}/{path}/news", {"limit": 40})
+            except Exception:
                 return None
-            # team details sometimes include description / banner as soft content
-            data = self._request(f"{THESPORTSDB_BASE}/lookupteam.php", {"id": tid})
-            teams = data.get("teams") or []
-            if not teams:
-                return None
-            t0 = teams[0]
-            desc = (t0.get("strDescriptionEN") or "")[:280]
-            if not desc:
-                return None
-            return [{
-                "headline": f"{team.get('name')} — club profile",
-                "description": desc,
-                "published": "",
-                "url": t0.get("strWebsite") or t0.get("strRSS") or "#",
-                "image": t0.get("strTeamBadge") or t0.get("strTeamLogo"),
-                "source": "TheSportsDB",
-            }]
+            out = []
+            for a in data.get("articles") or []:
+                h = a.get("headline") or ""
+                d = a.get("description") or ""
+                if not _relevant(h, d):
+                    continue
+                out.append({
+                    "headline": h,
+                    "description": d,
+                    "published": a.get("published") or "",
+                    "url": _safe_get(a, "links", "web", "href") or "#",
+                    "image": (a.get("images") or [{}])[0].get("url"),
+                    "source": "ESPN league-filtered",
+                })
+                if len(out) >= limit:
+                    break
+            return out if out else None
 
-        def search_links() -> Optional[List[dict]]:
+        def search_links() -> List[dict]:
             q = quote_plus(team.get("name") or team_key)
             return [
-                {"headline": f"{team.get('name')} news — Google", "description": "Latest search results", "published": "", "url": f"https://www.google.com/search?q={q}+news&tbm=nws", "image": None, "source": "Google News"},
-                {"headline": f"{team.get('name')} — ESPN search", "description": "ESPN team coverage", "published": "", "url": f"https://www.espn.com/search/_/q/{q}", "image": None, "source": "ESPN"},
-                {"headline": f"{team.get('name')} — CBS Sports", "description": "CBS team search", "published": "", "url": f"https://www.cbssports.com/search/{q}/", "image": None, "source": "CBS"},
-                {"headline": f"{team.get('name')} — FOX Sports", "description": "FOX team search", "published": "", "url": f"https://www.foxsports.com/search?q={q}", "image": None, "source": "FOX"},
-                {"headline": f"{team.get('name')} — official site search", "description": "Find official team site", "published": "", "url": f"https://www.google.com/search?q={q}+official+site", "image": None, "source": "Web"},
+                {"headline": f"{team.get('name')} news", "description": f"Google News for {team.get('name')} only", "published": "", "url": f"https://www.google.com/search?q={q}&tbm=nws", "image": None, "source": "Google News"},
+                {"headline": f"{team.get('name')} on ESPN", "description": "ESPN search", "published": "", "url": f"https://www.espn.com/search/_/q/{q}", "image": None, "source": "ESPN"},
+                {"headline": f"{team.get('name')} on CBS", "description": "CBS Sports", "published": "", "url": f"https://www.cbssports.com/search/{q}/", "image": None, "source": "CBS"},
             ]
 
-        return self._try_sources(
-            [("espn-team", espn_team_news), ("thesportsdb", thesportsdb_news), ("search-links", search_links)],
+        # Compose: description cards first, then articles
+        articles, src = self._try_sources(
+            [
+                ("espn-team-news", espn_team_news),
+                ("espn-league-filtered", espn_league_filtered),
+                ("search-links", search_links),
+            ],
             cache_key,
         )
+        desc = team_description_card()
+        # hard filter articles again
+        filtered = []
+        for a in articles or []:
+            if a.get("source") in ("Google News", "ESPN", "CBS", "SO!SB!Y!", "TheSportsDB", "ESPN team"):
+                filtered.append(a)
+            elif _relevant(a.get("headline") or "", a.get("description") or ""):
+                filtered.append(a)
+        combined = desc + filtered
+        # de-dupe headlines
+        seen = set()
+        out = []
+        for a in combined:
+            h = (a.get("headline") or "").strip().lower()
+            if h in seen:
+                continue
+            seen.add(h)
+            out.append(a)
+        return out[: max(limit + 2, 8)], src
 
-    # ---- Standings ----
     def get_standings(self, team_key: str) -> Tuple[List[dict], str]:
+        """Always return standings context for the selected team."""
         if team_key not in TEAMS:
             return [], "unknown-team"
         team = TEAMS[team_key]
-        cache_key = f"std:{team_key}"
+        cache_key = f"std:{team_key}:v2"
         path = team.get("espn_path") or ""
+        tid = str(team.get("espn_id") or "")
         year = time.gmtime().tm_year
+        focus = (team.get("name") or team.get("short") or "").lower()
 
-        def _parse_espn_standings(data: Any) -> Optional[List[dict]]:
+        def _parse_entries(data: Any) -> List[dict]:
             rows: List[dict] = []
 
             def walk(node: Any) -> None:
                 if isinstance(node, dict):
-                    entries = _safe_get(node, "standings", "entries")
-                    if entries:
+                    entries = node.get("entries") or _safe_get(node, "standings", "entries") or []
+                    if isinstance(entries, list) and entries and isinstance(entries[0], dict) and "team" in (entries[0] or {}):
                         for entry in entries:
                             team_obj = entry.get("team") or {}
                             stats = {
@@ -731,16 +837,14 @@ class SportsAPIClient:
                                 for s in (entry.get("stats") or [])
                                 if s.get("name")
                             }
-                            rows.append(
-                                {
-                                    "Team": team_obj.get("displayName") or "—",
-                                    "W": stats.get("wins") or stats.get("overall") or "—",
-                                    "L": stats.get("losses") or "—",
-                                    "PCT": stats.get("winPercent") or "—",
-                                    "GB": stats.get("gamesBehind") or "—",
-                                    "STRK": stats.get("streak") or "—",
-                                }
-                            )
+                            rows.append({
+                                "Team": team_obj.get("displayName") or team_obj.get("name") or "—",
+                                "W": stats.get("wins") or stats.get("overallWins") or stats.get("wins") or "—",
+                                "L": stats.get("losses") or stats.get("overallLosses") or "—",
+                                "PCT": stats.get("winPercent") or stats.get("avgPointsFor") or "—",
+                                "GB": stats.get("gamesBehind") or "—",
+                                "STRK": stats.get("streak") or stats.get("total") or "—",
+                            })
                     for v in node.values():
                         walk(v)
                 elif isinstance(node, list):
@@ -749,71 +853,152 @@ class SportsAPIClient:
 
             walk(data)
             seen = set()
-            unique = []
+            uniq = []
             for r in rows:
                 if r["Team"] not in seen:
                     seen.add(r["Team"])
-                    unique.append(r)
-            return unique[:50] if unique else None
+                    uniq.append(r)
+            return uniq
 
-        def espn_current() -> Optional[List[dict]]:
-            data = self._request(f"{ESPN_BASE}/{path}/standings")
-            return _parse_espn_standings(data)
+        def espn_standings() -> Optional[List[dict]]:
+            for url in (
+                f"{ESPN_BASE}/{path}/standings",
+                f"{ESPN_BASE}/{path}/standings?season={year}",
+                f"{ESPN_BASE}/{path}/standings?season={year-1}",
+            ):
+                try:
+                    data = self._request(url)
+                except Exception:
+                    continue
+                rows = _parse_entries(data)
+                if rows:
+                    return rows[:40]
+            return None
 
-        def espn_year(y: int):
-            def _inner() -> Optional[List[dict]]:
-                data = self._request(f"{ESPN_BASE}/{path}/standings?season={y}")
-                return _parse_espn_standings(data)
-            return _inner
+        def espn_team_record_row() -> Optional[List[dict]]:
+            if not tid:
+                return None
+            try:
+                data = self._request(f"{ESPN_BASE}/{path}/teams/{tid}")
+            except Exception:
+                return None
+            t0 = data.get("team") or {}
+            rec = "—"
+            for item in (t0.get("record") or {}).get("items") or []:
+                if item.get("type") == "total" or item.get("description") == "Overall Summary":
+                    rec = item.get("summary") or rec
+                    break
+            standing = t0.get("standingSummary") or ""
+            return [{
+                "Team": t0.get("displayName") or team.get("name"),
+                "W": rec.split("-")[0] if "-" in str(rec) else rec,
+                "L": rec.split("-")[1] if "-" in str(rec) and len(rec.split("-")) > 1 else "—",
+                "PCT": "—",
+                "GB": "—",
+                "STRK": standing or "Team record",
+            }]
 
-        def espn_site_links() -> Optional[List[dict]]:
-            # Soft fallback: directory of standings pages (not scraped tables)
+        def curated_fallback() -> List[dict]:
             q = quote_plus(team.get("name") or team_key)
             return [
-                {"Team": "ESPN standings page", "W": "—", "L": "—", "PCT": "—", "GB": "—", "STRK": f"https://www.espn.com/search/_/q/{q}%20standings"},
-                {"Team": "CBS Sports search", "W": "—", "L": "—", "PCT": "—", "GB": "—", "STRK": f"https://www.cbssports.com/search/{q}/"},
-                {"Team": "FOX Sports search", "W": "—", "L": "—", "PCT": "—", "GB": "—", "STRK": f"https://www.foxsports.com/search?q={q}"},
-                {"Team": "Official / Google", "W": "—", "L": "—", "PCT": "—", "GB": "—", "STRK": f"https://www.google.com/search?q={q}+standings"},
-                {"Team": "TheSportsDB", "W": "—", "L": "—", "PCT": "—", "GB": "—", "STRK": "https://www.thesportsdb.com/"},
+                {
+                    "Team": team.get("name") or team_key,
+                    "W": "—",
+                    "L": "—",
+                    "PCT": "—",
+                    "GB": "—",
+                    "STRK": f"Selected team · {team.get('league')}",
+                },
+                {"Team": "ESPN standings", "W": "link", "L": "", "PCT": "", "GB": "", "STRK": f"https://www.espn.com/search/_/q/{q}%20standings"},
+                {"Team": "CBS Sports", "W": "link", "L": "", "PCT": "", "GB": "", "STRK": f"https://www.cbssports.com/search/{q}/"},
+                {"Team": "FOX Sports", "W": "link", "L": "", "PCT": "", "GB": "", "STRK": f"https://www.foxsports.com/search?q={q}"},
+                {"Team": "Google", "W": "link", "L": "", "PCT": "", "GB": "", "STRK": f"https://www.google.com/search?q={q}+standings"},
             ]
 
-        sources = [
-            ("espn", espn_current),
-            (f"espn-{year-1}", espn_year(year - 1)),
-            (f"espn-{year-2}", espn_year(year - 2)),
-            ("standings-links", espn_site_links),
-        ]
-        return self._try_sources(sources, cache_key)
+        rows, src = self._try_sources(
+            [
+                ("espn-standings", espn_standings),
+                ("espn-team-record", espn_team_record_row),
+                ("fallback", curated_fallback),
+            ],
+            cache_key,
+        )
+        rows = rows or curated_fallback()
+        # Move selected team to top when present
+        if focus and rows:
+            def score(r):
+                name = (r.get("Team") or "").lower()
+                return 0 if any(p in name for p in focus.split() if len(p) > 2) else 1
+            rows = sorted(rows, key=score)
+        return rows, src
 
-    # ---- Schedule ----
     def get_schedule(self, team_key: str) -> Tuple[List[dict], str]:
+        """Always try to populate selected team's schedule."""
         if team_key not in TEAMS:
             return [], "unknown-team"
         team = TEAMS[team_key]
-        cache_key = f"sch:{team_key}"
+        cache_key = f"sch:{team_key}:v2"
+        path = team.get("espn_path") or ""
+        tid = str(team.get("espn_id") or "")
 
-        def espn() -> List[dict]:
-            url = f"{ESPN_BASE}/{team['espn_path']}/teams/{team['espn_id']}/schedule"
-            data = self._request(url)
+        def espn_team_schedule() -> Optional[List[dict]]:
+            if not tid:
+                return None
+            try:
+                data = self._request(f"{ESPN_BASE}/{path}/teams/{tid}/schedule")
+            except Exception:
+                return None
             events = data.get("events") or []
-            return [self._norm_espn_event(e) for e in events[-20:]]
+            out = [self._norm_espn_event(e) for e in events]
+            return out[-30:] if out else None
 
-        def thesportsdb() -> List[dict]:
-            url = f"{THESPORTSDB_BASE}/eventsnext.php"
-            data = self._request(url, {"id": team["thesportsdb_id"]})
-            events = data.get("events") or []
-            past = self._request(
-                f"{THESPORTSDB_BASE}/eventslast.php",
-                {"id": team["thesportsdb_id"]},
-            )
-            past_events = past.get("results") or []
-            return [
-                self._norm_tsdb_event(e)
-                for e in (list(past_events)[-5:] + list(events)[:8])
-            ]
+        def espn_scoreboard_as_schedule() -> Optional[List[dict]]:
+            try:
+                games, _ = self.get_scoreboard(team_key)
+            except Exception:
+                games = []
+            return games if games else None
+
+        def tsdb_schedule() -> Optional[List[dict]]:
+            tsid = team.get("thesportsdb_id") or ""
+            if not tsid:
+                return None
+            out = []
+            for endpoint, key in (("eventslast.php", "results"), ("eventsnext.php", "events")):
+                try:
+                    data = self._request(f"{THESPORTSDB_BASE}/{endpoint}", {"id": tsid})
+                except Exception:
+                    continue
+                for e in data.get(key) or []:
+                    out.append(self._norm_tsdb_event(e))
+            return out if out else None
+
+        def link_fallback() -> List[dict]:
+            q = quote_plus(team.get("name") or team_key)
+            return [{
+                "id": "link",
+                "name": f"{team.get('name')} schedule (search)",
+                "date": "",
+                "status": "See link",
+                "status_state": "pre",
+                "detail": f"https://www.google.com/search?q={q}+schedule",
+                "home_team": team.get("short") or "",
+                "home_score": "–",
+                "away_team": "Schedule",
+                "away_score": "–",
+                "venue": "",
+                "broadcast": None,
+                "source": "search",
+            }]
 
         return self._try_sources(
-            [("espn", espn), ("thesportsdb", thesportsdb)], cache_key
+            [
+                ("espn-team-schedule", espn_team_schedule),
+                ("espn-scoreboard", espn_scoreboard_as_schedule),
+                ("thesportsdb", tsdb_schedule),
+                ("search-link", link_fallback),
+            ],
+            cache_key,
         )
 
     def get_recent_form(self, team_key: str) -> Tuple[List[dict], str]:

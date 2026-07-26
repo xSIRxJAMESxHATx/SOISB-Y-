@@ -17,7 +17,7 @@ try:
 except ImportError:
     st_autorefresh = None
 
-from utils.api_client import TEAMS, get_client
+from utils.api_client import TEAMS, get_client, reddit_url
 from utils.theme import inject_css
 from utils.api_extras import (
     get_roster, get_all_time_leaders, get_championship_greats,
@@ -266,19 +266,40 @@ tabs = st.tabs([
 # ===== Scores + Weather =====
 with tabs[0]:
     st.markdown('<div class="section-title">Live Scores</div>', unsafe_allow_html=True)
-    st.caption("Real-time multi-source HTTP feeds · optional owner WebSocket · live cache ~12s")
+    st.caption("Real-time multi-source feeds · next scheduled game if none live")
+    try:
+        st.markdown(f"[Reddit: {team.get('short')}]({reddit_url(team_key)})")
+    except Exception:
+        pass
     try:
         games, src = client.get_scoreboard(team_key)
-        # Optional private WS merge
         try:
             games = merge_ws_payload_into_games(games or [])
-            sock = get_owner_ws()
-            if sock:
-                st.caption(f"WebSocket: {'connected' if sock.connected else 'reconnecting'} · {sock.last_error or 'ok'}")
         except Exception:
             pass
+        # Prefer live, else next scheduled from schedule
+        live = [g for g in (games or []) if (g.get("status_state") or "") == "in"]
+        if live:
+            games = live
+        elif not games:
+            try:
+                sched, s2 = client.get_schedule(team_key)
+                upcoming = [
+                    g for g in (sched or [])
+                    if (g.get("status_state") or "pre") in ("pre", "scheduled", "")
+                    or "schedule" in str(g.get("status") or "").lower()
+                ]
+                if not upcoming and sched:
+                    # pick nearest future-ish entry
+                    upcoming = list(sched)[-5:]
+                games = upcoming[:3] if upcoming else (sched or [])[:3]
+                if games:
+                    src = s2 + "+next"
+                    st.info("No live game — showing next scheduled game(s).")
+            except Exception:
+                pass
         if not games:
-            st.markdown('<div class="sbsby-card empty-state">No games in window — check Schedule.</div>', unsafe_allow_html=True)
+            st.markdown('<div class="sbsby-card empty-state">No games found — open Schedule tab.</div>', unsafe_allow_html=True)
         for g in games:
             st_live = (g.get("status_state") or "") == "in"
             badge = "status-badge live" if st_live else "status-badge"
@@ -613,7 +634,7 @@ with tabs[4]:
 # ===== News =====
 with tabs[5]:
     st.markdown('<div class="section-title">News</div>', unsafe_allow_html=True)
-    st.caption(f"Stories scoped to **{team.get('name')}** only · multi-source failover")
+    st.caption(f"Only **{team.get('name')}** — team description + filtered headlines")
     try:
         arts, src = client.get_news(team_key, 16)
         if not arts:
@@ -669,16 +690,22 @@ with tabs[6]:
 # ===== Schedule =====
 with tabs[7]:
     st.markdown('<div class="section-title">Schedule</div>', unsafe_allow_html=True)
+    st.caption(f"Schedule for **{team.get('name')}** only")
     try:
         games, src = client.get_schedule(team_key)
+        if not games:
+            st.info("No schedule rows yet — try Refresh.")
         for g in games or []:
             st.markdown(
-                f"**{g.get('name') or g.get('away_team','')+' @ '+g.get('home_team','')}** · "
-                f"{(g.get('date') or '')[:16]} · {g.get('status','')} · {g.get('away_score','–')}–{g.get('home_score','–')}"
+                f"**{g.get('name') or (str(g.get('away_team','')) + ' @ ' + str(g.get('home_team','')))}** · "
+                f"{(g.get('date') or '')[:16]} · {g.get('status') or g.get('detail') or ''} · "
+                f"{g.get('away_score','–')}–{g.get('home_score','–')}"
             )
         src_note(src)
-    except Exception:
+    except Exception as e:
         st.warning("Schedule error.")
+        if st.session_state.show_sources:
+            st.caption(str(e))
 
 # ===== Trends =====
 with tabs[8]:
@@ -909,13 +936,17 @@ with tabs[16]:
     st.session_state.rushmore_picks = picks
     if st.button("🗻 Generate Mount Rushmore", type="primary"):
         try:
-            png = rushmore_to_bytes(picks, title=f"{team['short']} Mount Rushmore")
+            with st.spinner("Carving faces into the mountain…"):
+                png = rushmore_to_bytes(picks, title=f"{team['short']} Mount Rushmore")
             st.image(png, use_container_width=True)
-            st.download_button("Download PNG", data=png, file_name=f"sbsby_rushmore_{team_key}.png", mime="image/png")
+            st.download_button(
+                "Download image",
+                data=png,
+                file_name=f"sosby_rushmore_{team_key}.jpg",
+                mime="image/jpeg",
+            )
         except Exception as e:
-            st.error("Rushmore failed.")
-            if st.session_state.show_sources:
-                st.caption(str(e))
+            st.error(f"Rushmore failed: {e}")
 
 # ===== Markets =====
 
