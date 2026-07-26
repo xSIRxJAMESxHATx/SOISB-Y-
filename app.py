@@ -41,12 +41,15 @@ from utils.twilio_sms import twilio_configured, send_sms, SETUP_HELP
 from utils.chatbot import reply as bot_reply
 from utils.moments_tickets import moments_for, ticket_links
 from utils.betting_sandbox import sandbox_single_summary, parlay_monte_carlo
-from utils.fun_facts import fun_fact_for_team
 from utils.bet_journal import add_entry, list_entries, clear_all, summary_stats, to_csv
 from utils.betting_sandbox import (
     poisson_score_matrix, poisson_total_over_prob, monte_carlo,
-    lambdas_from_form, kalman_1d, intriguing_idea,
+    lambdas_from_form, kalman_1d,
 )
+from utils.pdf_export import export_team_pdf
+from utils.ws_feeds import probe_websocket, sports_ws_candidates, get_owner_ws, merge_ws_payload_into_games
+from utils.viz3d import form_3d_scatter, poisson_surface
+from utils.errors import safe_call, format_feed_status
 from utils.bayes_poisson import (
     gamma_poisson_update, empirical_bayes_rates,
     hierarchical_match_preview, rates_from_form_games,
@@ -168,35 +171,6 @@ with b_right:
 st.markdown(f"**{flavor.get('slogan','')}** — _{flavor.get('witty','')}_")
 if flavor.get("phrases"):
     st.caption(" · ".join(flavor["phrases"][:8]))
-try:
-    from datetime import datetime, timezone
-    day_key = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    cache_key = f"funfact_{team_key}_{day_key}"
-    if cache_key not in st.session_state:
-        st.session_state[cache_key] = fun_fact_for_team(team_key, team.get("name") or "")
-    fact, fsrc = st.session_state[cache_key]
-    st.info(f"**Today’s fun fact:** {fact}")
-    src_note(fsrc)
-except Exception:
-    pass
-try:
-    idea_key = f"idea_{team_key}_{day_key if 'day_key' in dir() else 'x'}"
-    from datetime import datetime, timezone
-    day_key = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    idea_key = f"idea_{team_key}_{day_key}"
-    if idea_key not in st.session_state:
-        try:
-            _og, _ = client.get_odds(team_key) if odds_key else ([], "")
-        except Exception:
-            _og = []
-        try:
-            _form, _ = client.get_recent_form(team_key)
-        except Exception:
-            _form = []
-        st.session_state[idea_key] = intriguing_idea(_og, _form, team.get("name") or team.get("short") or "")
-    st.success(f"**Intriguing idea of the day:** {st.session_state[idea_key]}")
-except Exception:
-    pass
 
 c1, c2, c3 = st.columns([2.2, 1, 1])
 with c1:
@@ -216,6 +190,33 @@ try:
 except Exception:
     info, info_src = {"record": "—", "logo": None}, "err"
 record = info.get("record") or "—"
+
+# PDF export (after record/scores sources are available)
+try:
+    _games_pdf, _ = client.get_scoreboard(team_key)
+    _std_pdf, _ = client.get_standings(team_key)
+    _news_pdf, _ = client.get_news(team_key, 8)
+    try:
+        _j = list_entries(50)
+    except Exception:
+        _j = []
+    pdf_bytes = export_team_pdf(
+        team.get("name") or team_key,
+        record,
+        _games_pdf,
+        _std_pdf,
+        _news_pdf,
+        _j,
+    )
+    st.download_button(
+        "📄 Export PDF report",
+        data=pdf_bytes,
+        file_name=f"sosby_{team_key}_report.pdf",
+        mime="application/pdf",
+    )
+except Exception:
+    pass
+
 m1, m2, m3, m4 = st.columns(4)
 m1.markdown(f'<div class="metric-pill"><div class="label">Record</div><div class="value">{record}</div></div>', unsafe_allow_html=True)
 m2.markdown(f'<div class="metric-pill"><div class="label">League</div><div class="value">{team["league"].replace("-"," ").upper()[:18]}</div></div>', unsafe_allow_html=True)
@@ -265,8 +266,17 @@ tabs = st.tabs([
 # ===== Scores + Weather =====
 with tabs[0]:
     st.markdown('<div class="section-title">Live Scores</div>', unsafe_allow_html=True)
+    st.caption("Real-time multi-source HTTP feeds · optional owner WebSocket · live cache ~12s")
     try:
         games, src = client.get_scoreboard(team_key)
+        # Optional private WS merge
+        try:
+            games = merge_ws_payload_into_games(games or [])
+            sock = get_owner_ws()
+            if sock:
+                st.caption(f"WebSocket: {'connected' if sock.connected else 'reconnecting'} · {sock.last_error or 'ok'}")
+        except Exception:
+            pass
         if not games:
             st.markdown('<div class="sbsby-card empty-state">No games in window — check Schedule.</div>', unsafe_allow_html=True)
         for g in games:
@@ -471,6 +481,11 @@ with tabs[2]:
             mat = poisson_score_matrix(lam_h, lam_a)
             st.write({k: mat[k] for k in ("p_home", "p_draw", "p_away", "most_likely_score", "most_likely_p")})
             st.write(poisson_total_over_prob(lam_h, lam_a, tot_line))
+            try:
+                st.markdown("**Joint probability surface (WebGL)**")
+                st.plotly_chart(poisson_surface(lam_h, lam_a), use_container_width=True)
+            except Exception:
+                pass
         st.markdown("#### Detailed Monte Carlo")
         st.caption("Antithetic variates + optional stratified sampling.")
         nb = st.slider("Bets per path", 10, 200, 50)
@@ -598,29 +613,58 @@ with tabs[4]:
 # ===== News =====
 with tabs[5]:
     st.markdown('<div class="section-title">News</div>', unsafe_allow_html=True)
+    st.caption(f"Stories scoped to **{team.get('name')}** only · multi-source failover")
     try:
-        arts, src = client.get_news(team_key, 14)
+        arts, src = client.get_news(team_key, 16)
         if not arts:
-            st.info("No articles.")
+            st.info("No team-specific articles right now.")
         for a in arts:
-            st.markdown(f"**[{a.get('headline')}]({a.get('url') or '#'})**")
-            st.caption((a.get("description") or "")[:200])
+            img = a.get("image")
+            cols = st.columns([1, 4]) if img else st.columns([1])
+            if img:
+                with cols[0]:
+                    try:
+                        st.image(img, use_container_width=True)
+                    except Exception:
+                        pass
+                with cols[-1]:
+                    st.markdown(f"**[{a.get('headline')}]({a.get('url') or '#'})**")
+                    st.caption((a.get("description") or "")[:240])
+                    st.caption(f"{a.get('source') or ''} · {(a.get('published') or '')[:16]}")
+            else:
+                st.markdown(f"**[{a.get('headline')}]({a.get('url') or '#'})**")
+                st.caption((a.get("description") or "")[:240])
+                st.caption(f"{a.get('source') or ''}")
         src_note(src)
-    except Exception:
+    except Exception as e:
         st.warning("News unavailable.")
+        if st.session_state.show_sources:
+            st.caption(str(e))
 
 # ===== Standings =====
 with tabs[6]:
     st.markdown('<div class="section-title">Standings</div>', unsafe_allow_html=True)
+    st.caption(f"League table context for **{team.get('name')}** · prior seasons if current empty")
     try:
         rows, src = client.get_standings(team_key)
         if rows:
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            df = pd.DataFrame(rows)
+            # Highlight selected team rows when present
+            focus = (team.get("name") or team.get("short") or "").lower()
+            if "Team" in df.columns and focus:
+                mask = df["Team"].astype(str).str.lower().str.contains(focus.split()[-1] if focus else "", na=False)
+                if mask.any():
+                    st.markdown("**Your team**")
+                    st.dataframe(df[mask], use_container_width=True, hide_index=True)
+                    st.markdown("**Full table / links**")
+            st.dataframe(df, use_container_width=True, hide_index=True)
             src_note(src)
         else:
             st.info("Standings unavailable for this league window.")
-    except Exception:
+    except Exception as e:
         st.warning("Standings error.")
+        if st.session_state.show_sources:
+            st.caption(str(e))
 
 # ===== Schedule =====
 with tabs[7]:
@@ -639,27 +683,49 @@ with tabs[7]:
 # ===== Trends =====
 with tabs[8]:
     st.markdown('<div class="section-title">Trends</div>', unsafe_allow_html=True)
+    st.caption(f"Recent form for **{team.get('name')}** only · all-time markers if live form empty")
     try:
         form, src = client.get_recent_form(team_key)
         if form:
             rows = []
             for g in form:
                 try:
-                    hs, as_ = int(float(g.get("home_score") or 0)), int(float(g.get("away_score") or 0))
+                    hs = int(float(g.get("home_score") or 0))
+                    as_ = int(float(g.get("away_score") or 0))
                 except Exception:
                     hs, as_ = 0, 0
-                rows.append({"Matchup": g.get("name") or "Game", "Away": as_, "Home": hs, "Total": as_+hs, "Date": (g.get("date") or "")[:10]})
+                rows.append({
+                    "Matchup": g.get("name") or f"{g.get('away_team','')} @ {g.get('home_team','')}",
+                    "Away": as_, "Home": hs, "Total": as_ + hs,
+                    "Date": (g.get("date") or "")[:10],
+                    "Status": g.get("status") or g.get("detail") or "",
+                })
             df = pd.DataFrame(rows)
             st.dataframe(df, use_container_width=True, hide_index=True)
             if len(df) >= 2 and df["Total"].sum() > 0:
-                fig = px.bar(df, x="Date", y="Total", color="Total", title="Combined points")
-                fig.update_layout(height=300, margin=dict(l=10, r=10, t=40, b=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+                fig = px.bar(df, x="Date", y="Total", color="Total", title=f"{team.get('short')} — recent combined points")
+                fig.update_layout(height=320, margin=dict(l=10, r=10, t=40, b=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
                 st.plotly_chart(fig, use_container_width=True)
+            try:
+                fig3 = form_3d_scatter(rows, title=f"{team.get('short')} — 3D form space (WebGL)")
+                if fig3 is not None:
+                    st.plotly_chart(fig3, use_container_width=True)
+            except Exception:
+                pass
             src_note(src)
         else:
-            st.info("Need more completed games.")
-    except Exception:
+            st.info("No current-season finished games found — showing all-time trend markers.")
+            try:
+                hist, hsrc = client.get_all_time_trends(team_key)
+                if hist:
+                    st.dataframe(pd.DataFrame(hist), use_container_width=True, hide_index=True)
+                    src_note(hsrc)
+            except Exception:
+                st.caption("All-time trend table unavailable.")
+    except Exception as e:
         st.warning("Trends error.")
+        if st.session_state.show_sources:
+            st.caption(str(e))
 
 # ===== Leaders =====
 with tabs[9]:
@@ -918,6 +984,16 @@ with tabs[19]:
         ok, m = send_sms(phone, msg)
         st.success(m) if ok else st.error(m)
     st.caption("SMS only sends while you trigger it with valid Twilio secrets. No offline background push on Community Cloud.")
+    st.markdown("#### Live feed / WebSocket diagnostics")
+    try:
+        for c in sports_ws_candidates(team_key):
+            st.caption(f"{c.get('name')} · {c.get('transport')} — {c.get('note')}")
+        if st.button("Probe public echo WebSocket"):
+            st.json(probe_websocket())
+        sock = get_owner_ws()
+        st.caption("Owner SPORTS_WS_URL: " + ("active" if sock else "not set"))
+    except Exception as e:
+        st.caption(str(e))
 
 st.divider()
 st.markdown("""

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 import requests
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance, ImageOps
+from .smart_crop import crop_for_rushmore
 
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": "SOSBY-SportsHub/3.1"})
@@ -20,10 +21,10 @@ BASE_CANDIDATES = [
 # Approximate face niches on 1280x960 base (x, y, diameter) — Washington → Lincoln
 # Tuned for the included mt-rushmore photo
 SLOTS_1280 = [
-    (195, 160, 265),   # Washington
-    (420, 195, 220),   # Jefferson — lower
-    (610, 230, 190),   # Roosevelt — lower / deeper
-    (810, 175, 240),   # Lincoln
+    (185, 125, 290),   # Washington — larger, higher
+    (415, 165, 235),   # Jefferson
+    (605, 195, 205),   # Roosevelt
+    (800, 145, 255),   # Lincoln
 ]
 
 
