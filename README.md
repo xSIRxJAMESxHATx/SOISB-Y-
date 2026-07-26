@@ -72,3 +72,15 @@ Educational betting tools only. Not affiliated with leagues/schools.
 | **The Odds API** | Free tier ~500 req/month — use secrets key. |
 
 HS / track (Reynoldsburg, Tiffin): curated program hubs + MaxPreps/NFHS/TFRRS links when ESPN IDs are absent.
+
+
+## WebSocket fallback strategy
+
+1. **Primary:** HTTP polling of ESPN + TheSportsDB (reliable, cache + tenacity).
+2. **Live tick:** On auto-refresh, `live_score_tick` clears the team score cache and refetches.
+3. **Optional WS:** Set secret `SPORTS_WS_URL` for a private push feed; payloads merge when present.
+4. **Why not pure WS?** Major leagues do not offer free public score WebSockets. NFHS/MaxPreps are not open JSON score APIs.
+
+## Team lock
+
+Scoreboard/schedule matching uses **ESPN team id first**. Name matching uses distinctive tokens only (blocks generic words like "Football").

@@ -301,13 +301,33 @@ with tabs[0]:
             detail = g.get("detail") or ""
             if str(detail).startswith("http"):
                 st.markdown(f"**[{g.get('name') or 'Scores'}]({detail})**")
-            st.markdown(f"""
-            <div class="sbsby-card"><div class="score-card">
-              <div class="team-block"><div class="score">{g.get('away_score','–')}</div><div class="name">{g.get('away_team','Away')}</div></div>
-              <div style="text-align:center"><div class="vs-pill">VS</div><div class="{badge}">{status}</div></div>
-              <div class="team-block"><div class="score">{g.get('home_score','–')}</div><div class="name">{g.get('home_team','Home')}</div></div>
-            </div>
-            <div class="source-badge">{meta}</div></div>""", unsafe_allow_html=True)
+            away_s = g.get("away_score", "–")
+            home_s = g.get("home_score", "–")
+            try:
+                if away_s not in (None, "–", ""):
+                    away_s = str(int(float(away_s)))
+            except Exception:
+                away_s = str(away_s)
+            try:
+                if home_s not in (None, "–", ""):
+                    home_s = str(int(float(home_s)))
+            except Exception:
+                home_s = str(home_s)
+            away_n = str(g.get("away_team") or "Away")
+            home_n = str(g.get("home_team") or "Home")
+            st.markdown(
+                f'<div class="sbsby-card">'
+                f'<div class="score-card">'
+                f'<div class="team-block"><div class="score">{away_s}</div>'
+                f'<div class="name">{away_n}</div></div>'
+                f'<div style="text-align:center"><div class="vs-pill">VS</div>'
+                f'<div class="{badge}">{status}</div></div>'
+                f'<div class="team-block"><div class="score">{home_s}</div>'
+                f'<div class="name">{home_n}</div></div>'
+                f'</div>'
+                f'<div class="source-badge">{meta}</div></div>',
+                unsafe_allow_html=True,
+            )
         src_note(src)
     except Exception as e:
         st.error("Scores unavailable after failover.")

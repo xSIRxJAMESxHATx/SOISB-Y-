@@ -7,6 +7,7 @@ Intelligent retries, short TTL cache, graceful missing-data handling.
 """
 
 from __future__ import annotations
+import re
 
 import os
 import time
@@ -30,6 +31,7 @@ TEAMS: Dict[str, dict] = {
     "browns": {
         "name": "Cleveland Browns",
         "short": "Browns",
+        "search_name": "Cleveland Browns",
         "sport": "football",
         "league": "nfl",
         "espn_id": "5",
@@ -92,7 +94,8 @@ TEAMS: Dict[str, dict] = {
     },
     "osu_football": {
         "name": "Ohio State Buckeyes Football",
-        "short": "OSU Football",
+        "short": "Buckeyes",
+        "search_name": "Ohio State Buckeyes",
         "sport": "football",
         "league": "college-football",
         "espn_id": "194",
@@ -319,7 +322,37 @@ class APIError(Exception):
     pass
 
 
+GENERIC_MATCH_BLOCKLIST = {
+    "football", "basketball", "baseball", "soccer", "hockey", "track",
+    "field", "team", "sports", "university", "college", "boys", "girls",
+    "mens", "men's", "women", "women's", "varsity", "high", "school",
+    "club", "fc", "sc", "united", "city", "the", "and", "game", "match",
+    "osu",  # too short / ambiguous alone
+}
+
+
+def team_match_tokens(team: dict) -> list:
+    """Distinctive tokens for name matching — never generic sport words."""
+    tokens = []
+    for k in ("search_name", "odds_team", "short", "name", "mascot"):
+        v = (team.get(k) or "").lower().strip()
+        if not v:
+            continue
+        if v not in tokens and v not in GENERIC_MATCH_BLOCKLIST and len(v) > 2:
+            tokens.append(v)
+        for part in v.replace("-", " ").replace("/", " ").split():
+            if (
+                part
+                and len(part) > 2
+                and part not in GENERIC_MATCH_BLOCKLIST
+                and part not in tokens
+            ):
+                tokens.append(part)
+    return tokens
+
+
 def _safe_get(d: Any, *keys, default=None):
+
     cur = d
     for k in keys:
         if not isinstance(cur, dict):
@@ -646,7 +679,14 @@ class SportsAPIClient:
             s = c.get("score")
             if s is None or s == "":
                 return "–"
-            return s
+            try:
+                # clean "3.0" / "03" -> "3"
+                f = float(str(s).strip())
+                if f == int(f):
+                    return str(int(f))
+                return str(f)
+            except Exception:
+                return str(s).strip()
         venue = _safe_get(comp, "venue", "fullName") or _safe_get(ev, "venue", "fullName") or ""
         broadcasts = []
         for b in (comp.get("broadcasts") or []):
@@ -706,10 +746,14 @@ class SportsAPIClient:
             "status_state": state,
             "detail": e.get("strTime") or e.get("strVenue") or "",
             "home_team": e.get("strHomeTeam") or "Home",
-            "home_score": home_s if home_s is not None and str(home_s) != "" else "–",
+            "home_score": (
+                str(int(float(home_s))) if home_s is not None and str(home_s) != "" else "–"
+            ),
             "home_logo": e.get("strHomeTeamBadge"),
             "away_team": e.get("strAwayTeam") or "Away",
-            "away_score": away_s if away_s is not None and str(away_s) != "" else "–",
+            "away_score": (
+                str(int(float(away_s))) if away_s is not None and str(away_s) != "" else "–"
+            ),
             "away_logo": e.get("strAwayTeamBadge"),
             "venue": e.get("strVenue") or "",
             "broadcast": e.get("strCountry") or None,
@@ -785,15 +829,15 @@ class SportsAPIClient:
             return out
 
         def _involves_event(e: dict) -> bool:
+            # STRICT: ESPN team id is authoritative when present
             comps = _safe_get(e, "competitions", 0, "competitors") or []
             ids = [str(_safe_get(c, "team", "id") or "") for c in comps]
-            if tid and tid in ids:
-                return True
+            if tid:
+                return tid in ids
+            # Name fallback only with distinctive tokens (never "Football")
             blob = f"{e.get('name','')} {e.get('shortName','')}".lower()
-            if short and short in blob:
-                return True
-            token = name_l.split()[-1] if name_l else ""
-            return bool(token and token in blob)
+            tokens = team_match_tokens(team)
+            return any(tok in blob for tok in tokens)
 
         def add_games(games: List[dict], label: str) -> None:
             nonlocal pool, sources_used
@@ -859,6 +903,23 @@ class SportsAPIClient:
                 pass
 
         pool = _dedupe(pool)
+        # Strict post-filter: id or distinctive name tokens
+        tokens = team_match_tokens(team)
+        def _keeps_g(g: dict) -> bool:
+            blob = f"{g.get('name','')} {g.get('home_team','')} {g.get('away_team','')}".lower()
+            if tid:
+                # For ESPN-sourced rows trust schedule (already team endpoint) or name
+                if g.get("source") == "espn" and (
+                    short in blob or any(tok in blob for tok in tokens)
+                ):
+                    return True
+                # if scores came from team schedule endpoint they should match
+                if any(tok in blob for tok in tokens):
+                    return True
+                # last resort: short name
+                return bool(short and short.lower() in blob)
+            return any(tok in blob for tok in tokens) if tokens else True
+        pool = [g for g in pool if _keeps_g(g)]
 
         # Pick view
         live = [g for g in pool if _is_live(g)]
@@ -1243,6 +1304,14 @@ class SportsAPIClient:
                 except Exception:
                     continue
 
+        # Keep only games involving selected team (TSDB can be noisy)
+        tokens = team_match_tokens(team)
+        def _keeps(g: dict) -> bool:
+            blob = f"{g.get('name','')} {g.get('home_team','')} {g.get('away_team','')}".lower()
+            if not tokens:
+                return True
+            return any(tok in blob for tok in tokens)
+        pool = [g for g in pool if _keeps(g)]
         pool = _dedupe(pool)
         pool = sorted(pool, key=_sk)
 
