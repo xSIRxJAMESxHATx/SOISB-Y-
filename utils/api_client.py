@@ -613,30 +613,127 @@ class SportsAPIClient:
                 errors.append(f"{name}: {type(e).__name__}: {e}")
                 continue
 
-        empty: Any = [] 
-        self._set_cache(cache_key, empty, 20.0)
+        empty: Any = []
+        # short negative cache only — avoid sticky blanks for scores/schedule
+        neg_ttl = 8.0 if cache_key.startswith(("sb:", "sch:")) else 20.0
+        self._set_cache(cache_key, empty, neg_ttl)
         return empty, "none:" + ";".join(errors[:3])
+
+
+    def _norm_espn_event(self, ev: dict) -> dict:
+        """Normalize ESPN event (scoreboard or team schedule) to common shape."""
+        if not isinstance(ev, dict):
+            return {
+                "id": None, "name": "Game", "date": "", "status": "Scheduled",
+                "status_state": "pre", "detail": "", "home_team": "Home", "home_score": "–",
+                "away_team": "Away", "away_score": "–", "venue": "", "broadcast": None,
+                "source": "espn",
+            }
+        comp = (ev.get("competitions") or [{}])[0] or {}
+        competitors = comp.get("competitors") or []
+        home = next((c for c in competitors if c.get("homeAway") == "home"), {})
+        away = next((c for c in competitors if c.get("homeAway") == "away"), {})
+        if not home and len(competitors) >= 2:
+            # fallback order
+            away = competitors[0]
+            home = competitors[1]
+        status = _safe_get(ev, "status", "type", default={}) or {}
+        if not status:
+            status = _safe_get(comp, "status", "type", default={}) or {}
+        state = (status.get("state") or "pre").lower()
+        # scores
+        def _score(c):
+            s = c.get("score")
+            if s is None or s == "":
+                return "–"
+            return s
+        venue = _safe_get(comp, "venue", "fullName") or _safe_get(ev, "venue", "fullName") or ""
+        broadcasts = []
+        for b in (comp.get("broadcasts") or []):
+            name = _safe_get(b, "media", "shortName") or b.get("name")
+            if name:
+                broadcasts.append(str(name))
+        # geo / notes
+        odds_list = comp.get("odds") or []
+        line = None
+        if odds_list:
+            o = odds_list[0]
+            line = {
+                "provider": _safe_get(o, "provider", "name"),
+                "spread": o.get("details"),
+                "over_under": o.get("overUnder"),
+            }
+        return {
+            "id": ev.get("id"),
+            "name": ev.get("name") or ev.get("shortName") or "Game",
+            "date": ev.get("date") or "",
+            "status": status.get("description") or status.get("detail") or "Scheduled",
+            "status_state": state,
+            "detail": status.get("detail") or status.get("shortDetail") or "",
+            "home_team": _safe_get(home, "team", "displayName", default="Home") or "Home",
+            "home_score": _score(home),
+            "home_logo": _safe_get(home, "team", "logo"),
+            "away_team": _safe_get(away, "team", "displayName", default="Away") or "Away",
+            "away_score": _score(away),
+            "away_logo": _safe_get(away, "team", "logo"),
+            "venue": venue or "",
+            "broadcast": ", ".join(broadcasts) if broadcasts else None,
+            "odds": line,
+            "source": "espn",
+        }
+
+    def _norm_tsdb_event(self, e: dict) -> dict:
+        """Normalize TheSportsDB event."""
+        e = e or {}
+        home_s = e.get("intHomeScore")
+        away_s = e.get("intAwayScore")
+        status = e.get("strStatus") or "Scheduled"
+        state = "pre"
+        st_l = str(status).lower()
+        if home_s is not None and away_s is not None and str(home_s) != "" and str(away_s) != "":
+            state = "post"
+            if "final" not in st_l:
+                status = "Final"
+        date = e.get("dateEvent") or ""
+        time = e.get("strTime") or ""
+        if date and time and "T" not in date:
+            date = f"{date}T{time}"
+        return {
+            "id": e.get("idEvent"),
+            "name": e.get("strEvent") or f"{e.get('strAwayTeam','')} @ {e.get('strHomeTeam','')}",
+            "date": date,
+            "status": status,
+            "status_state": state,
+            "detail": e.get("strTime") or e.get("strVenue") or "",
+            "home_team": e.get("strHomeTeam") or "Home",
+            "home_score": home_s if home_s is not None and str(home_s) != "" else "–",
+            "home_logo": e.get("strHomeTeamBadge"),
+            "away_team": e.get("strAwayTeam") or "Away",
+            "away_score": away_s if away_s is not None and str(away_s) != "" else "–",
+            "away_logo": e.get("strAwayTeamBadge"),
+            "venue": e.get("strVenue") or "",
+            "broadcast": e.get("strCountry") or None,
+            "source": "thesportsdb",
+        }
 
     def get_scoreboard(
         self, team_key: str, date: Optional[str] = None
     ) -> Tuple[List[dict], str]:
         """
-        Always populate scores for the selected team:
-          1) live game if in progress
-          2) today's game if scheduled
-          3) most recent final + next upcoming
-        Multi-source with never-empty fallback for configured teams.
+        Aggregate multi-source games, then pick:
+          live → today → last final + next upcoming
+        Never sticky-cache empty scoreboards.
         """
         if team_key not in TEAMS:
             return [], "unknown-team"
         team = TEAMS[team_key]
-        cache_key = f"sb:{team_key}:{date or 'today'}:v6"
+        cache_key = f"sb:{team_key}:{date or 'today'}:v7"
 
-        # HS / local programs without ESPN
+        cached = self._get_cached(cache_key)
+        if cached is not None and cached != []:
+            return cached, "cache"
+
         if team.get("hs") and team_key in LOCAL_PROGRAMS and not team.get("espn_id"):
-            cached = self._get_cached(cache_key)
-            if cached is not None:
-                return cached, "cache"
             rows = local_program_rows(team_key, "schedule")
             self._set_cache(cache_key, rows, self.cache_ttl)
             return rows, "local-program"
@@ -645,158 +742,172 @@ class SportsAPIClient:
         tid = str(team.get("espn_id") or "")
         short = (team.get("short") or "").lower()
         name_l = (team.get("name") or "").lower()
+        sources_used: List[str] = []
+        pool: List[dict] = []
 
         def _parse_date(g: dict) -> str:
             return (g.get("date") or "")[:19]
 
+        def _state(g: dict) -> str:
+            return (g.get("status_state") or "").lower()
+
         def _is_final(g: dict) -> bool:
-            st = (g.get("status_state") or "").lower()
-            status = str(g.get("status") or "").lower()
-            return st in ("post", "final") or "final" in status
+            st, status = _state(g), str(g.get("status") or "").lower()
+            detail = str(g.get("detail") or "").lower()
+            if st in ("post", "final"):
+                return True
+            if "final" in status or "final" in detail:
+                return True
+            # scored and not live/pre
+            hs, aws = g.get("home_score"), g.get("away_score")
+            if hs not in (None, "–", "") and aws not in (None, "–", "") and st not in ("in", "pre"):
+                try:
+                    float(hs); float(aws)
+                    return True
+                except Exception:
+                    pass
+            return False
 
         def _is_live(g: dict) -> bool:
-            return (g.get("status_state") or "").lower() == "in"
+            return _state(g) == "in" or "live" in str(g.get("status") or "").lower()
 
         def _is_upcoming(g: dict) -> bool:
-            st = (g.get("status_state") or "pre").lower()
-            return st in ("pre", "scheduled", "") and not _is_final(g)
+            return not _is_final(g) and not _is_live(g)
 
-        def _involves_team_event(e: dict) -> bool:
-            if not tid:
-                blob = str(e).lower()
-                return short in blob or any(p in blob for p in name_l.split() if len(p) > 3)
+        def _dedupe(games: List[dict]) -> List[dict]:
+            seen, out = set(), []
+            for g in games:
+                k = str(g.get("id") or "") + "|" + str(g.get("name") or "") + "|" + _parse_date(g)
+                if k in seen:
+                    continue
+                seen.add(k)
+                out.append(g)
+            return out
+
+        def _involves_event(e: dict) -> bool:
             comps = _safe_get(e, "competitions", 0, "competitors") or []
             ids = [str(_safe_get(c, "team", "id") or "") for c in comps]
-            if tid in ids:
+            if tid and tid in ids:
                 return True
             blob = f"{e.get('name','')} {e.get('shortName','')}".lower()
-            return short in blob or (name_l.split()[-1] in blob if name_l else False)
+            if short and short in blob:
+                return True
+            token = name_l.split()[-1] if name_l else ""
+            return bool(token and token in blob)
 
-        def _pick_scoreboard_view(games: List[dict]) -> List[dict]:
+        def add_games(games: List[dict], label: str) -> None:
+            nonlocal pool, sources_used
             if not games:
-                return []
-            live = [g for g in games if _is_live(g)]
-            if live:
-                return live
-            # today (UTC date match)
-            from datetime import datetime, timezone
-            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            today_games = [g for g in games if (g.get("date") or "").startswith(today)]
-            if today_games:
-                return today_games
-            finals = sorted([g for g in games if _is_final(g)], key=_parse_date)
-            upcoming = sorted([g for g in games if _is_upcoming(g)], key=_parse_date)
-            out: List[dict] = []
-            if finals:
-                out.append(finals[-1])  # last final
-            if upcoming:
-                out.append(upcoming[0])  # next game
-            if out:
-                return out
-            # last resort: most recent 2 by date
-            return sorted(games, key=_parse_date)[-2:]
+                return
+            pool.extend(games)
+            sources_used.append(label)
 
-        def espn_team_schedule_all() -> Optional[List[dict]]:
-            if not tid or not path:
-                return None
-            try:
-                data = self._request(f"{ESPN_BASE}/{path}/teams/{tid}/schedule")
-            except Exception:
-                return None
-            events = data.get("events") or []
-            games = [self._norm_espn_event(e) for e in events]
-            games = [g for g in games if g.get("home_team") or g.get("name")]
-            picked = _pick_scoreboard_view(games)
-            return picked if picked else (games[-2:] if games else None)
+        # --- Source 1: ESPN team schedule (best year-round) ---
+        if tid and path:
+            for season_q in (None, {}):
+                try:
+                    url = f"{ESPN_BASE}/{path}/teams/{tid}/schedule"
+                    # current season implicit; also try seasontype=2 regular
+                    params = {"seasontype": 2} if season_q is not None else None
+                    data = self._request(url, params)
+                    events = data.get("events") or []
+                    if not events and season_q is None:
+                        # try without params already done; continue
+                        continue
+                    games = [self._norm_espn_event(e) for e in events]
+                    add_games(games, "espn-schedule")
+                    break
+                except Exception:
+                    continue
 
-        def espn_scoreboard_today() -> Optional[List[dict]]:
-            if not path:
-                return None
-            from datetime import datetime, timezone
-            params = {}
-            if date:
-                params["dates"] = date.replace("-", "")
-            else:
-                params["dates"] = datetime.now(timezone.utc).strftime("%Y%m%d")
-            try:
-                data = self._request(f"{ESPN_BASE}/{path}/scoreboard", params)
-            except Exception:
-                return None
-            events = [e for e in (data.get("events") or []) if _involves_team_event(e)]
-            games = [self._norm_espn_event(e) for e in events]
-            return games if games else None
+        # --- Source 2: ESPN scoreboard today + yesterday ---
+        if path:
+            from datetime import datetime, timezone, timedelta
+            now = datetime.now(timezone.utc)
+            for delta in (0, -1, 1):
+                day = (now + timedelta(days=delta)).strftime("%Y%m%d")
+                try:
+                    data = self._request(f"{ESPN_BASE}/{path}/scoreboard", {"dates": day})
+                    events = [e for e in (data.get("events") or []) if _involves_event(e)]
+                    add_games([self._norm_espn_event(e) for e in events], f"espn-sb-{day}")
+                except Exception:
+                    continue
 
-        def espn_scoreboard_nodate() -> Optional[List[dict]]:
-            if not path:
-                return None
-            try:
-                data = self._request(f"{ESPN_BASE}/{path}/scoreboard")
-            except Exception:
-                return None
-            events = [e for e in (data.get("events") or []) if _involves_team_event(e)]
-            games = [self._norm_espn_event(e) for e in events]
-            return games if games else None
-
-        def tsdb_last_next() -> Optional[List[dict]]:
-            tsid = team.get("thesportsdb_id") or ""
-            if not tsid:
-                return None
-            out: List[dict] = []
+        # --- Source 3: TheSportsDB last + next ---
+        tsid = team.get("thesportsdb_id") or ""
+        if tsid:
             try:
                 past = self._request(f"{THESPORTSDB_BASE}/eventslast.php", {"id": tsid})
-                for e in (past.get("results") or [])[:5]:
+                games = []
+                for e in (past.get("results") or [])[:10]:
                     g = self._norm_tsdb_event(e)
                     g["status_state"] = "post"
                     g["status"] = g.get("status") or "Final"
-                    out.append(g)
+                    games.append(g)
+                add_games(games, "tsdb-last")
             except Exception:
                 pass
             try:
                 nxt = self._request(f"{THESPORTSDB_BASE}/eventsnext.php", {"id": tsid})
-                for e in (nxt.get("events") or [])[:5]:
+                games = []
+                for e in (nxt.get("events") or [])[:10]:
                     g = self._norm_tsdb_event(e)
-                    g["status_state"] = "pre"
-                    out.append(g)
+                    g["status_state"] = g.get("status_state") or "pre"
+                    games.append(g)
+                add_games(games, "tsdb-next")
             except Exception:
                 pass
-            picked = _pick_scoreboard_view(out)
-            return picked if picked else (out[:2] if out else None)
 
-        def curated_never_empty() -> List[dict]:
+        pool = _dedupe(pool)
+
+        # Pick view
+        live = [g for g in pool if _is_live(g)]
+        from datetime import datetime, timezone
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        today_g = [g for g in pool if (g.get("date") or "").startswith(today)]
+        finals = sorted([g for g in pool if _is_final(g)], key=_parse_date)
+        upcoming = sorted([g for g in pool if _is_upcoming(g)], key=_parse_date)
+
+        picked: List[dict] = []
+        if live:
+            picked = live
+        elif today_g:
+            # include yesterday final if today is upcoming only
+            if all(_is_upcoming(g) for g in today_g) and finals:
+                picked = [finals[-1]] + today_g
+            else:
+                picked = today_g
+        else:
+            if finals:
+                picked.append(finals[-1])
+            if upcoming:
+                picked.append(upcoming[0])
+            if not picked and pool:
+                picked = sorted(pool, key=_parse_date)[-2:]
+
+        if not picked:
             q = quote_plus(team.get("name") or team_key)
-            return [{
-                "id": "fallback-scores",
-                "name": f"{team.get('name')} — scores",
+            picked = [{
+                "id": "fallback",
+                "name": f"{team.get('name')} scores",
                 "date": "",
-                "status": "See sources",
+                "status": "Open sources",
                 "status_state": "pre",
                 "detail": f"https://www.google.com/search?q={q}+score",
                 "home_team": team.get("short") or team.get("name"),
                 "home_score": "–",
-                "away_team": "Opponent",
+                "away_team": "See link",
                 "away_score": "–",
                 "venue": "",
                 "broadcast": None,
                 "source": "fallback",
-                "home_logo": None,
-                "away_logo": None,
             }]
+            sources_used.append("fallback")
 
-        # Prefer schedule-derived last/next — most reliable year-round
-        result, src = self._try_sources(
-            [
-                ("espn-team-schedule", espn_team_schedule_all),
-                ("espn-scoreboard-today", espn_scoreboard_today),
-                ("espn-scoreboard", espn_scoreboard_nodate),
-                ("tsdb-last-next", tsdb_last_next),
-                ("fallback", curated_never_empty),
-            ],
-            cache_key,
-            allow_empty=False,
-        )
-        if not result:
-            result, src = curated_never_empty(), "fallback"
-        return result, src
+        src = "+".join(sources_used[:6]) or "none"
+        ttl = self.live_cache_ttl if any(_is_live(g) for g in picked) else self.cache_ttl
+        self._set_cache(cache_key, picked, ttl)
+        return picked, src
 
     def get_team_info(self, team_key: str) -> Tuple[dict, str]:
         if team_key not in TEAMS:
@@ -1061,64 +1172,85 @@ class SportsAPIClient:
         return rows, src
 
     def get_schedule(self, team_key: str) -> Tuple[List[dict], str]:
-        """Full ordered schedule (when / where) for the selected team."""
+        """Ordered full schedule (when/where/score) — merges ESPN + TheSportsDB."""
         if team_key not in TEAMS:
             return [], "unknown-team"
         team = TEAMS[team_key]
-        cache_key = f"sch:{team_key}:v6"
+        cache_key = f"sch:{team_key}:v7"
+
+        cached = self._get_cached(cache_key)
+        if cached is not None and cached != []:
+            return cached, "cache"
 
         if team.get("hs") and team_key in LOCAL_PROGRAMS and not team.get("espn_id"):
-            return local_program_rows(team_key, "schedule"), "local-program"
+            rows = local_program_rows(team_key, "schedule")
+            self._set_cache(cache_key, rows, getattr(self, "schedule_ttl", 180.0))
+            return rows, "local-program"
 
         path = team.get("espn_path") or ""
         tid = str(team.get("espn_id") or "")
+        pool: List[dict] = []
+        sources_used: List[str] = []
 
-        def _sort_key(g: dict) -> str:
+        def _sk(g: dict) -> str:
             return (g.get("date") or "9999")[:19]
 
-        def espn_team_schedule() -> Optional[List[dict]]:
-            if not tid or not path:
-                return None
+        def _dedupe(games: List[dict]) -> List[dict]:
+            seen, out = set(), []
+            for g in games:
+                k = str(g.get("id") or "") + "|" + _sk(g) + "|" + str(g.get("name") or "")
+                if k in seen:
+                    continue
+                seen.add(k)
+                out.append(g)
+            return out
+
+        if tid and path:
             try:
                 data = self._request(f"{ESPN_BASE}/{path}/teams/{tid}/schedule")
+                events = data.get("events") or []
+                if events:
+                    pool.extend(self._norm_espn_event(e) for e in events)
+                    sources_used.append("espn-schedule")
             except Exception:
-                return None
-            events = data.get("events") or []
-            games = [self._norm_espn_event(e) for e in events]
-            # chronological
-            games = sorted(games, key=_sort_key)
-            return games if games else None
+                pass
+            # regular season explicit
+            try:
+                data = self._request(
+                    f"{ESPN_BASE}/{path}/teams/{tid}/schedule",
+                    {"seasontype": 2},
+                )
+                events = data.get("events") or []
+                if events:
+                    pool.extend(self._norm_espn_event(e) for e in events)
+                    sources_used.append("espn-reg")
+            except Exception:
+                pass
 
-        def tsdb_schedule() -> Optional[List[dict]]:
-            tsid = team.get("thesportsdb_id") or ""
-            if not tsid:
-                return None
-            out: List[dict] = []
-            for endpoint, key in (("eventslast.php", "results"), ("eventsnext.php", "events")):
+        tsid = team.get("thesportsdb_id") or ""
+        if tsid:
+            for endpoint, key, state in (
+                ("eventslast.php", "results", "post"),
+                ("eventsnext.php", "events", "pre"),
+            ):
                 try:
                     data = self._request(f"{THESPORTSDB_BASE}/{endpoint}", {"id": tsid})
                     for e in data.get(key) or []:
                         g = self._norm_tsdb_event(e)
-                        if "last" in endpoint:
-                            g["status_state"] = "post"
-                        out.append(g)
+                        g["status_state"] = state
+                        pool.append(g)
+                    sources_used.append(f"tsdb-{state}")
                 except Exception:
                     continue
-            out = sorted(out, key=_sort_key)
-            return out if out else None
 
-        def scoreboard_slice() -> Optional[List[dict]]:
-            try:
-                games, _ = self.get_scoreboard(team_key)
-            except Exception:
-                return None
-            return games if games else None
+        pool = _dedupe(pool)
+        pool = sorted(pool, key=_sk)
 
-        def link_fallback() -> List[dict]:
+        if not pool:
             q = quote_plus(team.get("name") or team_key)
-            return [{
-                "id": "sch-link",
-                "name": f"{team.get('name')} full schedule",
+            pool = [{
+                "id": "sch-fallback",
+                "name": f"{team.get('name')} schedule",
                 "date": "",
                 "status": "Open link",
                 "status_state": "pre",
@@ -1131,26 +1263,11 @@ class SportsAPIClient:
                 "broadcast": None,
                 "source": "search",
             }]
+            sources_used.append("fallback")
 
-        games, src = self._try_sources(
-            [
-                ("espn-team-schedule", espn_team_schedule),
-                ("thesportsdb", tsdb_schedule),
-                ("scoreboard-slice", scoreboard_slice),
-                ("search-link", link_fallback),
-            ],
-            cache_key,
-            allow_empty=False,
-            ttl=self.schedule_ttl if hasattr(self, "schedule_ttl") else 180.0,
-        )
-        if not games:
-            games, src = link_fallback(), "search-link"
-        # ensure sorted
-        try:
-            games = sorted(games, key=_sort_key)
-        except Exception:
-            pass
-        return games, src
+        src = "+".join(sources_used[:6]) or "none"
+        self._set_cache(cache_key, pool, getattr(self, "schedule_ttl", 180.0))
+        return pool, src
 
     def get_recent_form(self, team_key: str) -> Tuple[List[dict], str]:
         """Recent finished games for selected team only; falls back to broader history."""

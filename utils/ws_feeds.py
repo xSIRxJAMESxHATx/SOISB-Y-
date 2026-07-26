@@ -164,3 +164,29 @@ def merge_ws_payload_into_games(games: List[dict]) -> List[dict]:
     except Exception:
         pass
     return games
+
+
+def live_score_tick(client, team_key: str) -> dict:
+    """
+    One live-score tick for Streamlit auto-refresh / WS-style updates.
+    Clears negative cache, fetches scoreboard, returns status payload.
+    """
+    try:
+        # bust score cache key prefix for this team
+        for k in list(getattr(client, "_cache", {}).keys()):
+            if k.startswith(f"sb:{team_key}:"):
+                client._cache.pop(k, None)
+    except Exception:
+        pass
+    try:
+        games, src = client.get_scoreboard(team_key)
+    except Exception as e:
+        return {"ok": False, "error": str(e), "games": [], "source": "error"}
+    live = [g for g in (games or []) if (g.get("status_state") or "") == "in"]
+    return {
+        "ok": True,
+        "games": games or [],
+        "live_count": len(live),
+        "source": src,
+        "empty": not bool(games),
+    }

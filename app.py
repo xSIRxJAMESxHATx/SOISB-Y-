@@ -47,7 +47,7 @@ from utils.betting_sandbox import (
     lambdas_from_form, kalman_1d,
 )
 from utils.pdf_export import export_team_pdf
-from utils.ws_feeds import probe_websocket, sports_ws_candidates, get_owner_ws, merge_ws_payload_into_games
+from utils.ws_feeds import probe_websocket, sports_ws_candidates, get_owner_ws, merge_ws_payload_into_games, live_score_tick
 from utils.viz3d import form_3d_scatter, poisson_surface
 from utils.errors import safe_call, format_feed_status
 from utils.bayes_poisson import (
@@ -272,7 +272,14 @@ with tabs[0]:
     except Exception:
         pass
     try:
-        games, src = client.get_scoreboard(team_key)
+        # WS-style tick: refresh score cache each load when auto-refresh is on
+        if st.session_state.get("auto_refresh"):
+            tick = live_score_tick(client, team_key)
+            games, src = tick.get("games") or [], tick.get("source") or "tick"
+            if tick.get("empty"):
+                st.caption("Waiting for score feed…")
+        else:
+            games, src = client.get_scoreboard(team_key)
         try:
             games = merge_ws_payload_into_games(games or [])
         except Exception:
