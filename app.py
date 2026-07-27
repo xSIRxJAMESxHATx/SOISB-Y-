@@ -11,6 +11,7 @@ from utils.app_shell import page_setup, header_bar, src_note
 from utils.cached_feeds import cached_scoreboard, cached_team_info
 from utils.scorecard import render_score_card
 from utils.error_handler import ui_error
+from utils.fan_links import fan_links_for
 
 remember_page("home")
 team_key, team, client, flavor = page_setup("SO!SB!Y!")
@@ -44,7 +45,12 @@ with j4:
 with j5:
     st.page_link("pages/5_Alerts.py", label="Alerts", icon="🔔")
 
-st.caption("On phone: open the **sidebar ☰** for team switch, theme, and Settings.")
+st.caption("Use **Navigate** links above or the sidebar on any page. Quick teams jump to Guardians, Cavs, Buckeyes, Browns.")
+
+st.markdown("#### Fan pages & Reddit")
+for link in fan_links_for(team_key):
+    st.markdown(f"- [{link['name']}]({link['url']})")
+
 
 # Snapshot metrics
 try:

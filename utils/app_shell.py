@@ -1,18 +1,26 @@
-"""Shared multipage shell: sidebar, theme, client, offline banner."""
+"""Shared multipage shell: top nav, sidebar, theme, offline banner."""
 from __future__ import annotations
 import os
 from datetime import datetime, timezone
-from typing import Optional
 
 import streamlit as st
 
 from utils.api_client import TEAMS, get_client
 from utils.theme import inject_css
-from utils.api_extras import enrich_team_cfg
 from utils.team_flavor import get_flavor
 from utils.community import AVATAR_PRESETS, avatar_url
 from utils.offline_mode import show_offline_banner
-from utils.nav_state import remember_page
+from utils.nav_state import remember_page, last_page
+from utils.client_store import inject_client_store
+
+# Quick-pick teams for Ohio / CLE fans
+QUICK_TEAMS = [
+    ("browns", "Browns"),
+    ("guardians", "Guardians"),
+    ("cavaliers", "Cavs"),
+    ("osu_football", "OSU FB"),
+    ("osu_mbb", "OSU MBB"),
+]
 
 
 def bootstrap_secrets() -> None:
@@ -37,7 +45,6 @@ def init_state() -> None:
         "refresh_sec": 45,
         "odds_key_input": "",
         "selected_player": None,
-        "rushmore_picks": None,
         "show_sources": False,
         "username": "Fan",
         "avatar_preset": "initials",
@@ -48,25 +55,57 @@ def init_state() -> None:
             st.session_state[k] = v
 
 
+def render_top_nav() -> None:
+    """Always-visible nav: Home + sections + quick teams (works without sidebar)."""
+    st.markdown(
+        """
+        <style>
+        div[data-testid="stHorizontalBlock"] button { min-height: 42px !important; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown("##### ☰ Navigate")
+    r1 = st.columns([1.1, 1.1, 1.1, 1.1, 1.1, 1.1])
+    with r1[0]:
+        st.page_link("app.py", label="Home", icon="🏠")
+    with r1[1]:
+        st.page_link("pages/1_Game_Day.py", label="Game Day", icon="🏈")
+    with r1[2]:
+        st.page_link("pages/2_Analytics.py", label="Analytics", icon="📊")
+    with r1[3]:
+        st.page_link("pages/3_Betting_Lab.py", label="Betting Lab", icon="🧪")
+    with r1[4]:
+        st.page_link("pages/4_Fan_Zone.py", label="Fan Zone", icon="🦉")
+    with r1[5]:
+        st.page_link("pages/5_Alerts.py", label="Alerts", icon="🔔")
+
+    st.markdown("**Quick teams**")
+    qcols = st.columns(len(QUICK_TEAMS))
+    for i, (key, label) in enumerate(QUICK_TEAMS):
+        with qcols[i]:
+            if st.button(label, key=f"qt_{key}_{st.session_state.get('last_page','home')}", use_container_width=True):
+                st.session_state.team_key = key
+                st.rerun()
+    st.divider()
+
+
 def render_sidebar() -> str:
-    """Always-available sidebar (Streamlit ☰). Returns team_key."""
+    # Keep sidebar useful; start expanded so it is active after page switches
     with st.sidebar:
         st.markdown("## 🦉 SO!SB!Y!")
         try:
-            st.image("assets/favicon.png", width=56)
+            st.image("assets/favicon.png", width=52)
         except Exception:
-            try:
-                st.image("assets/icons/favicon-32.png", width=48)
-            except Exception:
-                st.write("🦉")
-        st.caption("☰ Always open this menu on phone for team & settings")
+            st.write("🦉")
+        st.caption("Sidebar stays available on every page · use ☰ top-right if collapsed")
 
-        st.page_link("app.py", label="🏠 Home", icon="🏠")
-        st.page_link("pages/1_Game_Day.py", label="🏈 Game Day", icon="🏈")
-        st.page_link("pages/2_Analytics.py", label="📊 Analytics", icon="📊")
-        st.page_link("pages/3_Betting_Lab.py", label="🧪 Betting Lab", icon="🧪")
-        st.page_link("pages/4_Fan_Zone.py", label="🦉 Fan Zone", icon="🦉")
-        st.page_link("pages/5_Alerts.py", label="🔔 Alerts", icon="🔔")
+        st.page_link("app.py", label="🏠 Home")
+        st.page_link("pages/1_Game_Day.py", label="🏈 Game Day")
+        st.page_link("pages/2_Analytics.py", label="📊 Analytics")
+        st.page_link("pages/3_Betting_Lab.py", label="🧪 Betting Lab")
+        st.page_link("pages/4_Fan_Zone.py", label="🦉 Fan Zone")
+        st.page_link("pages/5_Alerts.py", label="🔔 Alerts")
 
         st.divider()
         team_options = {v["short"]: k for k, v in TEAMS.items()}
@@ -75,8 +114,14 @@ def render_sidebar() -> str:
             idx = list(team_options.values()).index(st.session_state.team_key)
         except ValueError:
             idx = 0
-        sel = st.selectbox("🏈 Team", labels, index=idx, key="sidebar_team")
+        sel = st.selectbox("🏈 All teams", labels, index=idx, key="sidebar_team_all")
         st.session_state.team_key = team_options[sel]
+
+        st.markdown("**CLE / Ohio**")
+        for key, label in QUICK_TEAMS:
+            if st.button(label, key=f"sb_qt_{key}", use_container_width=True):
+                st.session_state.team_key = key
+                st.rerun()
 
         st.session_state.dark_mode = st.toggle("🌙 Dark", st.session_state.dark_mode, key="sb_dark")
         st.session_state.auto_refresh = st.toggle("🔄 Auto-refresh", st.session_state.auto_refresh, key="sb_auto")
@@ -85,7 +130,6 @@ def render_sidebar() -> str:
             "📦 Prefer cached / offline",
             st.session_state.get("offline_mode", False),
             key="sb_off",
-            help="When on, show disk-cached data and skip some live calls when possible.",
         )
 
         with st.expander("👤 Profile"):
@@ -103,30 +147,31 @@ def render_sidebar() -> str:
 
         with st.expander("⚙️ Settings / API"):
             st.session_state.odds_key_input = st.text_input(
-                "Odds API key",
-                value=st.session_state.odds_key_input,
-                type="password",
-                key="sb_odds",
+                "Odds API key", value=st.session_state.odds_key_input, type="password", key="sb_odds",
             )
             st.session_state.show_sources = st.toggle("Show sources", st.session_state.show_sources, key="sb_src")
-            st.caption("Educational sandbox only — not a bookmaker.")
 
-        st.caption("Read-only app · Community posts only")
+        st.caption("Read-only · Educational betting lab")
     return st.session_state.team_key
 
 
 def page_setup(title: str = "SO!SB!Y!") -> tuple:
-    """Call at top of every page. Returns (team_key, team, client, flavor)."""
     st.set_page_config(
         page_title=title,
         page_icon="assets/favicon.png",
         layout="wide",
-        initial_sidebar_state="expanded",
+        initial_sidebar_state="expanded",  # active after page switches
     )
     bootstrap_secrets()
     init_state()
     team_key = render_sidebar()
     inject_css(team_key, st.session_state.dark_mode)
+    render_top_nav()  # hamburger-style always-on nav
+    show_offline_banner()
+    try:
+        inject_client_store(team_key, last_page())
+    except Exception:
+        pass
     client = get_client()
     odds = st.session_state.odds_key_input or os.environ.get("ODDS_API_KEY", "")
     if odds:
@@ -136,7 +181,6 @@ def page_setup(title: str = "SO!SB!Y!") -> tuple:
             pass
     team = TEAMS.get(team_key) or TEAMS["browns"]
     flavor = get_flavor(team_key)
-    show_offline_banner()
     return team_key, team, client, flavor
 
 
@@ -146,13 +190,13 @@ def src_note(s: str) -> None:
 
 
 def header_bar(team: dict, flavor: dict, live: bool = False) -> None:
-    live_h = "🔴 LIVE" if live else (flavor.get("icon") or "🦉")
+    live_h = "LIVE" if live else (flavor.get("icon") or "OWL")
     c1, c2, c3 = st.columns([1, 3.5, 1.2])
     with c1:
         try:
-            st.image("assets/superb_owl_icon.png", width=88)
+            st.image("assets/superb_owl_icon.png", width=80)
         except Exception:
-            st.write("🦉")
+            st.write("OWL")
     with c2:
         st.markdown(
             f'<div class="sbsby-banner"><h1>Superb Owl! Super Browns! Yeah!</h1>'
@@ -161,9 +205,10 @@ def header_bar(team: dict, flavor: dict, live: bool = False) -> None:
         )
     with c3:
         st.caption(datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))
-        if st.button("↻ Refresh", use_container_width=True, key="hdr_ref"):
+        if st.button("Refresh", use_container_width=True, key="hdr_ref"):
             try:
                 get_client().clear_cache()
             except Exception:
                 pass
             st.rerun()
+        st.page_link("app.py", label="Back to Home")
