@@ -4,7 +4,7 @@ import streamlit as st
 import pandas as pd
 
 from utils.nav_state import remember_page
-from utils.app_shell import page_setup, src_note, header_bar
+from utils.app_shell import page_setup, src_note
 from utils.cached_feeds import cached_scoreboard, cached_schedule, cached_news
 from utils.scorecard import render_score_card, format_score_pair
 from utils.api_client import reddit_url
@@ -27,7 +27,6 @@ try:
     live = client.any_live_games(team_key)
 except Exception:
     pass
-header_bar(team, flavor, live)
 st.markdown(f"**{flavor.get('slogan','')}** — _{flavor.get('witty','')}_")
 tabs = st.tabs(["Scores", "Schedule", "News", "Watch", "Weather"])
 

@@ -7,7 +7,7 @@ from __future__ import annotations
 import streamlit as st
 
 from utils.nav_state import remember_page
-from utils.app_shell import page_setup, header_bar, src_note
+from utils.app_shell import page_setup, src_note
 from utils.cached_feeds import cached_scoreboard, cached_team_info
 from utils.scorecard import render_score_card
 from utils.error_handler import ui_error
@@ -27,7 +27,6 @@ try:
     live = client.any_live_games(team_key)
 except Exception:
     pass
-header_bar(team, flavor, live)
 
 st.markdown(f"**{flavor.get('slogan','')}** — _{flavor.get('witty','')}_")
 

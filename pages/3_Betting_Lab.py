@@ -4,7 +4,7 @@ import streamlit as st
 import pandas as pd
 
 from utils.nav_state import remember_page
-from utils.app_shell import page_setup, src_note, header_bar
+from utils.app_shell import page_setup, src_note
 from utils.api_client import TEAMS
 from utils.cached_feeds import cached_betting_dashboard
 from utils.betting_tools import (
@@ -18,7 +18,6 @@ from utils.error_handler import ui_error
 
 remember_page("betting")
 team_key, team, client, flavor = page_setup("Betting Lab · SO!SB!Y!")
-header_bar(team, flavor)
 
 st.warning(
     "**Educational sandbox only.** These tools teach odds math, bankroll sizing, "

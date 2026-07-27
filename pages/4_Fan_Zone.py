@@ -3,7 +3,7 @@ from __future__ import annotations
 import streamlit as st
 
 from utils.nav_state import remember_page
-from utils.app_shell import page_setup, src_note, header_bar
+from utils.app_shell import page_setup, src_note
 from utils.community import (
     list_topics, create_topic, add_post, vote, supabase_configured,
 )
@@ -14,7 +14,6 @@ from utils.error_handler import ui_error
 
 remember_page("fan")
 team_key, team, client, flavor = page_setup("Fan Zone · SO!SB!Y!")
-header_bar(team, flavor)
 
 st.markdown("#### Fan hubs")
 for link in fan_links_for(team_key):

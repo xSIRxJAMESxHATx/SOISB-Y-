@@ -42,8 +42,17 @@ def bootstrap_secrets() -> None:
 
 
 def header_bar(team: dict, flavor: dict, live: bool = False) -> None:
-    """Banner strip — call FIRST so it sits above navigation."""
+    """Single top banner — team-colored gradient, above navigation."""
     live_h = "LIVE" if live else (flavor.get("icon") or "OWL")
+    colors = team.get("colors") or {}
+    p = colors.get("primary") or "#FF5A00"
+    s = colors.get("secondary") or "#E7B100"
+    # readable gradient using selected team colors
+    banner_style = (
+        f"background:linear-gradient(125deg,{p} 0%,{p}cc 40%,{s} 100%);"
+        "color:#fff;border-radius:20px;padding:1.15rem 1.4rem;"
+        "box-shadow:0 12px 40px rgba(0,0,0,0.12);border:1px solid rgba(255,255,255,0.15);"
+    )
     c1, c2, c3 = st.columns([1.1, 3.4, 1.2])
     with c1:
         try:
@@ -52,13 +61,15 @@ def header_bar(team: dict, flavor: dict, live: bool = False) -> None:
             st.write("OWL")
     with c2:
         st.markdown(
-            f'<div class="sbsby-banner"><h1>Superb Owl! Super Browns! Yeah!</h1>'
-            f'<p class="subtitle">SO!SB!Y! · {team.get("name","")} · {live_h}</p></div>',
+            f'<div class="sbsby-banner" style="{banner_style}">'
+            f"<h1 style='margin:0;color:#fff;font-weight:800'>Superb Owl! Super Browns! Yeah!</h1>"
+            f"<p class='subtitle' style='margin:0.35rem 0 0;color:#fff;opacity:0.95'>"
+            f"SO!SB!Y! · {team.get('name','')} · {live_h}</p></div>",
             unsafe_allow_html=True,
         )
     with c3:
         st.caption(datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"))
-        if st.button("Refresh", use_container_width=True, key="hdr_ref"):
+        if st.button("Refresh", use_container_width=True, key="hdr_ref_once"):
             try:
                 get_client().clear_cache()
             except Exception:
@@ -211,7 +222,7 @@ def page_setup(title: str = "SO!SB!Y!") -> tuple:
     team_key, team = get_active_team_cfg(TEAMS)
     if team_key.startswith("ext_") and team:
         register_team(team_key, team)
-    inject_css("browns" if team_key.startswith("ext_") else (team_key if team_key in TEAMS else "browns"), st.session_state.dark_mode)
+    inject_css(team_key if team_key in TEAMS else "browns", st.session_state.dark_mode)
 
     flavor = get_flavor(team_key if team_key in TEAMS else "browns")
     if team.get("ephemeral"):

@@ -3,14 +3,13 @@ from __future__ import annotations
 import streamlit as st
 
 from utils.nav_state import remember_page
-from utils.app_shell import page_setup, header_bar
+from utils.app_shell import page_setup
 from utils.twilio_sms import twilio_configured, send_sms, SETUP_HELP
 from utils.ws_feeds import probe_websocket, sports_ws_candidates, get_owner_ws
 from utils.error_handler import recent_logs
 
 remember_page("alerts")
 team_key, team, client, flavor = page_setup("Alerts · SO!SB!Y!")
-header_bar(team, flavor)
 
 st.markdown(SETUP_HELP)
 st.write("Twilio:", "ready" if twilio_configured() else "add secrets")

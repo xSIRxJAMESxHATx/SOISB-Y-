@@ -5,7 +5,7 @@ import pandas as pd
 import plotly.express as px
 
 from utils.nav_state import remember_page
-from utils.app_shell import page_setup, src_note, header_bar
+from utils.app_shell import page_setup, src_note
 from utils.cached_feeds import cached_standings, cached_form
 from utils.api_extras import (
     get_roster, get_all_time_leaders, get_championship_greats,
@@ -18,7 +18,6 @@ from utils.scorecard import format_score
 
 remember_page("analytics")
 team_key, team, client, flavor = page_setup("Analytics · SO!SB!Y!")
-header_bar(team, flavor)
 team_cfg = enrich_team_cfg(team_key, team)
 tabs = st.tabs(["Standings", "Trends", "Leaders", "Greats", "Players"])
 
