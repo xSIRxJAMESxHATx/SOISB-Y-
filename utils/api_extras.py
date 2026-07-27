@@ -155,6 +155,12 @@ def player_tidbit(name: str, position: str = "", team_key: str = "") -> str:
     return card
 
 
+def enrich_team_cfg(team_key: str, team: dict) -> dict:
+    cfg = dict(team or {})
+    cfg["key"] = team_key
+    return cfg
+
+
 def get_roster(team_cfg: dict) -> Tuple[List[dict], str]:
     """5-source roster attempt."""
     key = f"roster:{team_cfg.get('espn_id')}:{team_cfg.get('espn_path')}"
@@ -247,94 +253,117 @@ def get_championship_greats(team_key: str) -> Tuple[List[dict], str]:
 
 
 def get_player_card(player_name: str, team_cfg: dict) -> Tuple[dict, str]:
-    """
-    Multi-source player card:
-    1 TheSportsDB search
-    2 ESPN news search proxy via league news filter
-    3 Curated note from leaders/greats
-    4 Static shell
-    """
+    """Multi-source player card with always-on anecdote and basic stats."""
+    team_cfg = team_cfg or {}
+    team_key = str(team_cfg.get("key") or "")
     card = {
         "name": player_name,
-        "team": team_cfg.get("name"),
+        "team": team_cfg.get("name") or team_cfg.get("short") or "",
         "position": "",
+        "number": "",
         "nationality": "",
         "birth": "",
         "description": "",
         "thumb": None,
         "cutout": None,
+        "best_years": "",
+        "anecdote": "",
+        "stats": {},
         "source": "",
     }
     sources_tried = []
 
-    # 1 TheSportsDB
+    # 0 Lore first (instant)
+    lore = PLAYER_LORE.get(player_name) or {}
+    if not lore:
+        for k, v in PLAYER_LORE.items():
+            if k.lower() == (player_name or "").lower():
+                lore = v
+                break
+    if lore:
+        card["best_years"] = lore.get("best_years") or ""
+        card["anecdote"] = lore.get("anecdote") or ""
+        if lore.get("anecdote") and not card["description"]:
+            card["description"] = lore.get("anecdote") or ""
+
+    # 1 Roster match (position / headshot / jersey)
+    try:
+        roster, _ = get_roster(team_cfg)
+        for p in roster or []:
+            if (p.get("name") or "").lower() == (player_name or "").lower():
+                card["position"] = p.get("position") or card["position"]
+                card["number"] = p.get("jersey") or card["number"]
+                if p.get("headshot"):
+                    card["thumb"] = p.get("headshot")
+                if p.get("college"):
+                    card["stats"]["College"] = p.get("college")
+                card["source"] = (card["source"] + "+roster").strip("+")
+                break
+    except Exception as e:
+        sources_tried.append(f"roster:{e}")
+
+    # 2 TheSportsDB
     try:
         data = _get(f"{THESPORTSDB}/searchplayers.php", {"p": player_name})
         players = data.get("player") or []
-        # prefer matching team sport-ish
         pick = players[0] if players else None
         if pick:
-            card.update({
-                "name": pick.get("strPlayer") or player_name,
-                "position": pick.get("strPosition") or "",
-                "nationality": pick.get("strNationality") or "",
-                "birth": pick.get("dateBorn") or "",
-                "description": (pick.get("strDescriptionEN") or "")[:600],
-                "thumb": pick.get("strThumb"),
-                "cutout": pick.get("strCutout"),
-                "team": pick.get("strTeam") or card["team"],
-            })
-            card["source"] = "thesportsdb"
+            card["name"] = pick.get("strPlayer") or card["name"]
+            card["position"] = pick.get("strPosition") or card["position"]
+            card["nationality"] = pick.get("strNationality") or ""
+            card["birth"] = pick.get("dateBorn") or ""
+            desc = (pick.get("strDescriptionEN") or "")[:600]
+            if desc:
+                card["description"] = desc
+            if pick.get("strThumb"):
+                card["thumb"] = pick.get("strThumb")
+            if pick.get("strCutout"):
+                card["cutout"] = pick.get("strCutout")
+            card["team"] = pick.get("strTeam") or card["team"]
+            card["source"] = (card["source"] + "+thesportsdb").strip("+")
             card = enrich_card_anecdote(card, player_name, team_cfg)
-            return card, "thesportsdb"
+            return card, card["source"] or "thesportsdb"
         sources_tried.append("thesportsdb-empty")
     except Exception as e:
         sources_tried.append(f"tsdb:{e}")
 
-    # 2 Curated bio snippet from greats / leaders
-    from .curated_data import CHAMPIONSHIP_GREATS, ALL_TIME_LEADERS
-    for g in CHAMPIONSHIP_GREATS.get(team_cfg.get("key", ""), []):
-        if g["player"].lower() == player_name.lower():
-            card["description"] = f"{g.get('why', '')} · Era: {g.get('era', '')} · {g.get('titles', '')}"
-            card["source"] = "curated-greats"
-            card = enrich_card_anecdote(card, player_name, team_cfg)
-            return card, "curated-greats"
-    for cat, entries in ALL_TIME_LEADERS.get(team_cfg.get("key", ""), {}).items():
-        for e in entries:
-            if e["player"].lower() == player_name.lower():
-                card["description"] = f"All-time {cat}: {e.get('value')} ({e.get('note') or 'franchise leaderboard'})"
-                card["source"] = "curated-leaders"
-            card = enrich_card_anecdote(card, player_name, team_cfg)
-            return card, "curated-leaders"
+    # 3 Curated greats / leaders
+    try:
+        from .curated_data import CHAMPIONSHIP_GREATS, ALL_TIME_LEADERS
+        for g in CHAMPIONSHIP_GREATS.get(team_key, []) or []:
+            if (g.get("player") or "").lower() == (player_name or "").lower():
+                card["description"] = f"{g.get('why', '')} · Era: {g.get('era', '')} · {g.get('titles', '')}"
+                card["source"] = (card["source"] + "+greats").strip("+")
+                card = enrich_card_anecdote(card, player_name, team_cfg)
+                return card, card["source"] or "curated-greats"
+        for cat, entries in (ALL_TIME_LEADERS.get(team_key) or {}).items():
+            for e in entries or []:
+                if (e.get("player") or "").lower() == (player_name or "").lower():
+                    card["description"] = f"All-time {cat}: {e.get('value')} ({e.get('note') or 'franchise'})"
+                    card["stats"][cat] = e.get("value")
+                    card["source"] = (card["source"] + "+leaders").strip("+")
+                    card = enrich_card_anecdote(card, player_name, team_cfg)
+                    return card, card["source"] or "curated-leaders"
+    except Exception as e:
+        sources_tried.append(f"curated:{e}")
 
-    # 3 Wikipedia summary API (no key)
+    # 4 Wikipedia summary (no key)
     try:
         title = player_name.replace(" ", "_")
-        data = _get(
-            f"https://en.wikipedia.org/api/rest_v1/page/summary/{title}",
-            timeout=5,
-        )
-        if data.get("extract"):
-            card["description"] = data.get("extract", "")[:600]
+        data = _get(f"https://en.wikipedia.org/api/rest_v1/page/summary/{title}")
+        extract = (data.get("extract") or "")[:500]
+        if extract:
+            card["description"] = extract
             thumb = (data.get("thumbnail") or {}).get("source")
-            if thumb:
+            if thumb and not card.get("thumb"):
                 card["thumb"] = thumb
-            card["source"] = "wikipedia"
-            card = enrich_card_anecdote(card, player_name, team_cfg)
-            return card, "wikipedia"
-        sources_tried.append("wiki-empty")
+            card["source"] = (card["source"] + "+wikipedia").strip("+")
     except Exception as e:
         sources_tried.append(f"wiki:{e}")
 
-    # 4 UI avatar
-    card["thumb"] = f"https://ui-avatars.com/api/?name={player_name.replace(' ', '+')}&size=256&background=311D00&color=fff"
-    card["description"] = card["description"] or f"{player_name} — select another source or check season roster."
-    card["source"] = "avatar-fallback"
+    if not card.get("description"):
+        card["description"] = f"{player_name} — roster / archive lookup for {team_cfg.get('short') or team_cfg.get('name') or 'team'}."
     card = enrich_card_anecdote(card, player_name, team_cfg)
-    return card, "avatar-fallback"
+    card["source"] = card.get("source") or ("fallback:" + "|".join(sources_tried[:3]))
+    return card, card["source"]
 
-
-def enrich_team_cfg(team_key: str, team: dict) -> dict:
-    t = dict(team)
-    t["key"] = team_key
-    return t

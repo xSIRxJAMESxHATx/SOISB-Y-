@@ -4,7 +4,7 @@ import streamlit as st
 import pandas as pd
 
 from utils.nav_state import remember_page
-from utils.app_shell import page_setup, src_note
+from utils.app_shell import page_setup, src_note, render_page_footer
 from utils.cached_feeds import cached_scoreboard, cached_schedule, cached_news
 from utils.scorecard import render_score_card, format_score_pair
 from utils.api_client import reddit_url
@@ -106,3 +106,5 @@ with tabs[4]:
         src_note(wsrc)
     except Exception as e:
         ui_error("Weather", e)
+
+render_page_footer()

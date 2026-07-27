@@ -3,7 +3,7 @@ from __future__ import annotations
 import streamlit as st
 
 from utils.nav_state import remember_page
-from utils.app_shell import page_setup
+from utils.app_shell import page_setup, render_page_footer
 from utils.twilio_sms import twilio_configured, send_sms, SETUP_HELP
 from utils.ws_feeds import probe_websocket, sports_ws_candidates, get_owner_ws
 from utils.error_handler import recent_logs
@@ -30,3 +30,5 @@ st.caption("Owner WS: " + ("active" if get_owner_ws() else "not set"))
 if st.session_state.get("show_sources"):
     st.markdown("#### Recent error log")
     st.json(recent_logs(8))
+
+render_page_footer()

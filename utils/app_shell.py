@@ -79,7 +79,7 @@ def header_bar(team: dict, flavor: dict, live: bool = False) -> None:
 
 
 def render_main_nav() -> None:
-    """Always-on navigation (works when Streamlit sidebar is collapsed)."""
+    """Page menu only — always above the banner."""
     st.markdown("##### Menu · pages")
     cols = st.columns(6)
     for col, (path, label) in zip(cols, [
@@ -92,27 +92,21 @@ def render_main_nav() -> None:
     ]):
         with col:
             st.page_link(path, label=label)
+    with st.expander("Menu help (if sidebar is closed)", expanded=False):
+        st.caption("Streamlit ☰ is top-right. This Menu row always works for navigation.")
 
-    with st.expander("Show menu help (if sidebar vanished)", expanded=False):
-        st.markdown(
-            """
-**Phone / desktop:** Streamlit's **☰** is usually top-right of the app chrome.
-This **Menu · pages** row always stays on the page — you never need the sidebar to move around.
 
-**Sidebar** still holds profile + advanced toggles. Use **Menu · pages** for navigation.
-            """
-        )
-
-    st.markdown("**Quick teams**")
+def render_quick_teams() -> None:
+    """Team switcher near bottom of page."""
+    st.markdown("##### Quick teams")
     qcols = st.columns(len(QUICK_TEAMS))
     for i, (key, label) in enumerate(QUICK_TEAMS):
         with qcols[i]:
             if st.button(label, key=f"qt_{key}", use_container_width=True):
                 set_core_team(key)
                 st.rerun()
-
-    with st.expander("Search league teams (NFL/MLB/NBA/NHL/MLS/NCAA)", expanded=False):
-        q = st.text_input("Search team name", key="cat_q", placeholder="Penguins, Galaxy, Wolverines…")
+    with st.expander("Search league teams", expanded=False):
+        q = st.text_input("Search team name", key="cat_q", placeholder="Penguins, Galaxy…")
         if q and len(q) >= 2:
             try:
                 hits = search_catalog(q, limit=25)
@@ -130,7 +124,6 @@ This **Menu · pages** row always stays on the page — you never need the sideb
                     set_ephemeral_team(cfg)
                     st.success(f"Loaded {cfg['name']}")
                     st.rerun()
-
     with st.expander("Core roster search", expanded=False):
         q2 = st.text_input("Core teams only", key="core_q")
         hits2 = search_teams(q2) if q2 else []
@@ -146,21 +139,28 @@ This **Menu · pages** row always stays on the page — you never need the sideb
 
 
 def render_odds_key_panel() -> None:
-    """Odds API key on the main page — not buried in sidebar."""
-    with st.container():
-        st.markdown("##### Odds API (Betting Lab)")
-        a, b = st.columns([3, 2])
-        with a:
-            st.session_state.odds_key_input = st.text_input(
-                "Paste free key from the-odds-api.com",
-                value=st.session_state.get("odds_key_input") or "",
-                type="password",
-                key="main_odds_key",
-                help="Free tier available. Used only for educational lab lines.",
-            )
-        with b:
-            st.markdown("[Get free Odds API key](https://the-odds-api.com/)")
-            st.caption("Also works via Streamlit Secrets → ODDS_API_KEY")
+    """Odds API key at bottom of page."""
+    st.markdown("##### Odds API (Betting Lab)")
+    a, b = st.columns([3, 2])
+    with a:
+        st.session_state.odds_key_input = st.text_input(
+            "Paste free key from the-odds-api.com",
+            value=st.session_state.get("odds_key_input") or "",
+            type="password",
+            key="main_odds_key",
+            help="Free tier · educational lab only",
+        )
+    with b:
+        st.markdown("[Get free Odds API key](https://the-odds-api.com/)")
+        st.caption("Or set ODDS_API_KEY in Streamlit Secrets")
+
+
+def render_page_footer() -> None:
+    """Call at the end of every page: quick teams then odds key."""
+    st.divider()
+    render_quick_teams()
+    st.divider()
+    render_odds_key_panel()
 
 
 def render_sidebar() -> None:
@@ -233,16 +233,15 @@ def page_setup(title: str = "SO!SB!Y!") -> tuple:
             "phrases": [team.get("short") or "", team.get("league") or ""],
         }
 
-    # Order: BANNER → NAV → ODDS KEY
+    # Order: MENU → BANNER (footer called by each page)
     live = False
     client = get_client()
     try:
         live = client.any_live_games(team_key)
     except Exception:
         pass
-    header_bar(team, flavor, live)
     render_main_nav()
-    render_odds_key_panel()
+    header_bar(team, flavor, live)
     show_offline_banner()
 
     try:

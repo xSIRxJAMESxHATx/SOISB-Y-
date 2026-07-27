@@ -3,7 +3,7 @@ from __future__ import annotations
 import streamlit as st
 
 from utils.nav_state import remember_page
-from utils.app_shell import page_setup, src_note
+from utils.app_shell import page_setup, src_note, render_page_footer
 from utils.community import (
     list_topics, create_topic, add_post, vote, supabase_configured,
 )
@@ -81,3 +81,5 @@ with tabs[3]:
         src_note(src)
     for who, text in st.session_state.chat_log[-12:]:
         st.markdown(f"**{'You' if who == 'you' else 'Desk'}:** {text}")
+
+render_page_footer()

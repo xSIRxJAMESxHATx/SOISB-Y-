@@ -4,7 +4,7 @@ import streamlit as st
 import pandas as pd
 
 from utils.nav_state import remember_page
-from utils.app_shell import page_setup, src_note
+from utils.app_shell import page_setup, src_note, render_page_footer
 from utils.api_client import TEAMS
 from utils.cached_feeds import cached_betting_dashboard
 from utils.betting_tools import (
@@ -233,3 +233,5 @@ with tabs[5]:
         st.markdown(f"**[{l['name']}]({l['url']})** — {l['desc']}")
     for s in LIVE_ARB_STRATEGIES[:3]:
         st.markdown(f"**{s['title']}** — {s['body']}")
+
+render_page_footer()
