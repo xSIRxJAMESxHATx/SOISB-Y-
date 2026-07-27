@@ -1,28 +1,24 @@
-# Deploy SO!SB!Y! on Streamlit Community Cloud
+# Deploy SO!SB!Y! (multipage)
 
-1. Push this folder to GitHub (`app.py` at repo root or set main file path).
-2. [share.streamlit.io](https://share.streamlit.io) → New app → select repo/branch → Main file `app.py`.
-3. **Secrets** (optional but recommended):
+## Structure
+- `app.py` — Home + Jump links
+- `pages/1_Game_Day.py` — Scores, schedule, news, watch, weather
+- `pages/2_Analytics.py` — Standings, trends, leaders, greats, players
+- `pages/3_Betting_Lab.py` — Educational sandbox (multi-team)
+- `pages/4_Fan_Zone.py` — Community, Rushmore, moments, tickets, bot
+- `pages/5_Alerts.py` — SMS + diagnostics
 
-```toml
-ODDS_API_KEY = "..."
-TWILIO_ACCOUNT_SID = "..."
-TWILIO_AUTH_TOKEN = "..."
-TWILIO_FROM_NUMBER = "+1..."
-MOD_PASSWORD = "..."
-SUPABASE_URL = "..."
-SUPABASE_KEY = "..."
-# optional
-REDIS_URL = "..."
-SPORTS_WS_URL = "..."
-```
+## Streamlit Cloud
+1. Push repo to GitHub
+2. Main file: `app.py`
+3. Secrets (optional): ODDS_API_KEY, Twilio, Supabase, MOD_PASSWORD, REDIS_URL
+4. After deploy, open **sidebar ☰** on mobile for navigation
 
-4. Ensure `requirements.txt` installs (streamlit, pandas, plotly, pillow, requests, tenacity, fpdf2, streamlit-autorefresh).
-5. After deploy, open the app once and hit **↻ Refresh now** to warm caches.
+## Offline / cache
+- Toggle **Prefer cached / offline** in sidebar
+- `st.cache_data` TTLs on scoreboard/schedule/standings/news
+- Disk cache under `.data/http_cache/` when APIs fail briefly
 
-## Mobile
-- Open the **sidebar** (Streamlit’s ☰ control) for team switch, dark mode, refresh interval, Profile, Settings/API.
-- Main page has a second team dropdown when the sidebar is closed.
-
-## Favicons
-`assets/favicon.png` is used as `page_icon`. Full icon set lives under `assets/icons/`.
+## Favicon
+- PNG: `assets/favicon.png`
+- SVG: `assets/favicon.svg` / `assets/icons/favicon.svg`

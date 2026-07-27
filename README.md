@@ -98,3 +98,9 @@ Set `REDIS_URL` in secrets to enable a shared cache layer. Without it, memory + 
 ## Teams
 
 Removed: Reynoldsburg, Tiffin Track, Kent State (local/HS focus dropped for reliability).
+
+
+## Multipage v2
+Home (`app.py`) plus `pages/*` for faster cold start.
+Jump buttons use `st.page_link`. Sidebar mirrors the same destinations.
+Betting Lab is educational/sandbox and can focus any team in the app.
