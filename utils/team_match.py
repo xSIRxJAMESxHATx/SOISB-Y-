@@ -3,6 +3,8 @@ from __future__ import annotations
 from typing import Dict, List
 
 GENERIC_BLOCKLIST = {
+    # note: do NOT block "crew" or "jackets" — team nicknames
+
     "football", "basketball", "baseball", "soccer", "hockey", "track",
     "field", "team", "sports", "university", "college", "boys", "girls",
     "mens", "men's", "women", "women's", "varsity", "high", "school",

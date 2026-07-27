@@ -138,6 +138,8 @@ TEAMS: Dict[str, dict] = {
     "crew": {
         "name": "Columbus Crew",
         "short": "Crew",
+        "search_name": "Columbus Crew",
+        "mascot": "Crew",
         "sport": "soccer",
         "league": "usa.1",
         "espn_id": "183",
@@ -159,6 +161,8 @@ TEAMS: Dict[str, dict] = {
     "bluejackets": {
         "name": "Columbus Blue Jackets",
         "short": "Blue Jackets",
+        "search_name": "Columbus Blue Jackets",
+        "mascot": "Jackets",
         "sport": "hockey",
         "league": "nhl",
         "espn_id": "29",
@@ -228,6 +232,21 @@ ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 
 class APIError(Exception):
     pass
+
+# Ephemeral / league-catalog teams registered at runtime
+RUNTIME_TEAMS: dict = {}
+
+
+def register_team(key: str, cfg: dict) -> None:
+    RUNTIME_TEAMS[key] = cfg
+
+
+def resolve_team(team_key: str) -> dict:
+    if team_key in TEAMS:
+        return TEAMS[team_key]
+    if team_key in RUNTIME_TEAMS:
+        return RUNTIME_TEAMS[team_key]
+    return TEAMS.get("browns") or {}
 
 
 GENERIC_MATCH_BLOCKLIST = {
@@ -657,9 +676,9 @@ class SportsAPIClient:
           live → today → last final + next upcoming
         Never sticky-cache empty scoreboards.
         """
-        if team_key not in TEAMS:
+        if team_key not in TEAMS and team_key not in RUNTIME_TEAMS:
             return [], "unknown-team"
-        team = TEAMS[team_key]
+        team = resolve_team(team_key)
         cache_key = f"sb:{team_key}:{date or 'today'}:v7"
 
         cached = self._get_cached(cache_key)
@@ -860,9 +879,9 @@ class SportsAPIClient:
         return picked, src
 
     def get_team_info(self, team_key: str) -> Tuple[dict, str]:
-        if team_key not in TEAMS:
+        if team_key not in TEAMS and team_key not in RUNTIME_TEAMS:
             return {"name": "Unknown", "record": "—", "logo": None}, "unknown-team"
-        team = TEAMS[team_key]
+        team = resolve_team(team_key)
         cache_key = f"info:{team_key}"
 
         def espn() -> dict:
@@ -920,9 +939,9 @@ class SportsAPIClient:
     # ---- News ----
     def get_news(self, team_key: str, limit: int = 12) -> Tuple[List[dict], str]:
         """Headlines only for the selected team (no long club descriptions)."""
-        if team_key not in TEAMS:
+        if team_key not in TEAMS and team_key not in RUNTIME_TEAMS:
             return [], "unknown-team"
-        team = TEAMS[team_key]
+        team = resolve_team(team_key)
         cache_key = f"news:{team_key}:{limit}:v3"
         needles = []
         for k in ("name", "short", "odds_team", "search_name", "mascot"):
@@ -1000,9 +1019,9 @@ class SportsAPIClient:
 
     def get_standings(self, team_key: str) -> Tuple[List[dict], str]:
         """Always return standings context for the selected team."""
-        if team_key not in TEAMS:
+        if team_key not in TEAMS and team_key not in RUNTIME_TEAMS:
             return [], "unknown-team"
-        team = TEAMS[team_key]
+        team = resolve_team(team_key)
         cache_key = f"std:{team_key}:v4"
         if team.get("hs") and team_key in LOCAL_PROGRAMS and not team.get("espn_id"):
             rows = local_program_rows(team_key, "standings")
@@ -1123,9 +1142,9 @@ class SportsAPIClient:
 
     def get_schedule(self, team_key: str) -> Tuple[List[dict], str]:
         """Ordered full schedule (when/where/score) — merges ESPN + TheSportsDB."""
-        if team_key not in TEAMS:
+        if team_key not in TEAMS and team_key not in RUNTIME_TEAMS:
             return [], "unknown-team"
-        team = TEAMS[team_key]
+        team = resolve_team(team_key)
         cache_key = f"sch:{team_key}:v7"
 
         cached = self._get_cached(cache_key)
@@ -1229,9 +1248,9 @@ class SportsAPIClient:
 
     def get_recent_form(self, team_key: str) -> Tuple[List[dict], str]:
         """Recent finished games for selected team only; falls back to broader history."""
-        if team_key not in TEAMS:
+        if team_key not in TEAMS and team_key not in RUNTIME_TEAMS:
             return [], "unknown-team"
-        team = TEAMS[team_key]
+        team = resolve_team(team_key)
         name = (team.get("name") or "").lower()
         short = (team.get("short") or "").lower()
 
@@ -1305,11 +1324,11 @@ class SportsAPIClient:
         self.odds_api_key = (key or "").strip()
 
     def get_odds(self, team_key: str) -> Tuple[List[dict], str]:
-        if team_key not in TEAMS:
+        if team_key not in TEAMS and team_key not in RUNTIME_TEAMS:
             return [], "unknown-team"
         if not self.odds_api_key:
             return [], "no-api-key"
-        team = TEAMS[team_key]
+        team = resolve_team(team_key)
         cache_key = f"odds:{team_key}"
         sport_key = team.get("odds_sport_key")
         team_name = (team.get("odds_team") or "").lower()

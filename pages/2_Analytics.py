@@ -106,7 +106,7 @@ with tabs[4]:
                 f'<div class="bb-name">{card.get("name", player)}</div>'
                 f'<div class="bb-team">{card.get("team") or team.get("short")}</div>'
                 f'<div class="bb-stats">{(card.get("description") or "")[:280]}</div>'
-                f'<div class="bb-anecdote">{anecdote}</div></div>',
+                f'<div class="bb-anecdote"><strong>Fun fact:</strong> {anecdote}</div></div>',
                 unsafe_allow_html=True,
             )
             src_note(csrc)

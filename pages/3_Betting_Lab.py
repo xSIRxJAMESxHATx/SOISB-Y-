@@ -108,6 +108,44 @@ with tabs[2]:
     except Exception as e:
         ui_error("Kelly", e)
 
+    st.markdown("#### Expected value (EV) helper")
+    st.caption("EV = (p × profit_if_win) − ((1−p) × stake). Positive EV is a teaching signal, not a guarantee.")
+    try:
+        ev_stake = st.number_input("Stake $", 1.0, value=100.0, step=5.0, key="ev_stake")
+        ev_amer = st.number_input("American odds", value=-110, step=5, key="ev_amer")
+        ev_p = st.slider("Your win p", 0.01, 0.99, 0.52, 0.01, key="ev_p")
+        dec = american_to_decimal(ev_amer) or 0
+        profit = ev_stake * (dec - 1) if dec else 0
+        ev = ev_p * profit - (1 - ev_p) * ev_stake
+        st.metric("Estimated EV $", f"{ev:.2f}")
+        st.caption(f"Decimal {dec:.3f} · Implied {(1/dec if dec else 0):.1%}")
+    except Exception as e:
+        ui_error("EV helper", e)
+
+    st.markdown("#### Break-even win rate")
+    try:
+        be_amer = st.number_input("Odds for break-even", value=-110, step=5, key="be_amer")
+        be_dec = american_to_decimal(be_amer) or 0
+        if be_dec:
+            st.write(f"You need about **{(1/be_dec)*100:.1f}%** win rate to break even at these odds (before juice nuance).")
+    except Exception:
+        pass
+
+    st.markdown("#### Hedge sketch (two-way)")
+    st.caption("Illustrates how a hedge stake offsets risk — educational only.")
+    try:
+        h1 = st.number_input("Original stake", 1.0, value=50.0, key="h1")
+        h1o = st.number_input("Original American", value=150, key="h1o")
+        h2o = st.number_input("Hedge American", value=-160, key="h2o")
+        d1, d2 = american_to_decimal(h1o) or 0, american_to_decimal(h2o) or 0
+        if d1 and d2:
+            # stake2 so profit roughly balances
+            win1 = h1 * (d1 - 1)
+            h2 = win1 / (d2 - 1) if d2 > 1 else 0
+            st.write(f"Approx hedge stake **${h2:.2f}** so outcomes are closer to flat (ignores limits/fees).")
+    except Exception:
+        pass
+
 with tabs[3]:
     st.markdown("### Single-bet Monte Carlo (paper)")
     try:
@@ -174,6 +212,22 @@ with tabs[4]:
             st.rerun()
     except Exception as e:
         ui_error("Journal", e)
+
+
+with st.expander("More lab tools"):
+    st.markdown("#### Unit ladder")
+    st.caption("Maps confidence to paper units (1–5). Teaching aid only.")
+    conf = st.slider("Confidence", 1, 5, 3, key="unit_conf")
+    unit = st.number_input("Unit size $", 1.0, value=10.0, key="unit_sz")
+    st.write(f"Suggested paper stake: **${conf * unit:.2f}** ({conf} units)")
+    st.markdown("#### Closing line value (CLV) sketch")
+    st.caption("CLV ≈ your price vs close. Positive CLV is a process metric, not profit.")
+    yours = st.number_input("Your decimal price", 1.01, value=2.1, step=0.01, key="clv_y")
+    close = st.number_input("Closing decimal", 1.01, value=2.0, step=0.01, key="clv_c")
+    if yours > 1 and close > 1:
+        st.write(f"Rough CLV signal: **{(yours/close - 1)*100:.2f}%** price improvement vs close")
+    st.markdown("#### Parlay vig awareness")
+    st.write("Each leg multiplies book edge. More legs → more total juice. Prefer learning on singles first.")
 
 with tabs[5]:
     for l in client.prediction_links(focus_key):

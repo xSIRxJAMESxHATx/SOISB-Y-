@@ -1,385 +1,255 @@
-"""
-Dynamic team-themed CSS — light/dark + mobile + 1960s baseball cards + watermark hook.
-All literal braces in CSS are doubled for f-string safety.
-"""
+"""Premium Owl-first theme with Tailwind-inspired utility CSS for Streamlit."""
 from __future__ import annotations
 
-from .api_client import TEAMS
+from utils.api_client import TEAMS
 
 
 def build_css(team_key: str, dark: bool = False) -> str:
-    c = TEAMS.get(team_key, TEAMS["browns"])["colors"]
+    team_c = (TEAMS.get(team_key) or TEAMS.get("browns") or {}).get("colors") or {}
+    team_primary = team_c.get("primary") or "#FF5A00"
+    # Superb Owl core
+    o_orange, o_brown, o_cream, o_gold = "#FF5A00", "#4A2A12", "#FFF8EF", "#E7B100"
     if dark:
-        bg, card, text, muted = c["dark_bg"], c["dark_card"], "#F5F0EB", "#B8A99A"
-        border, shadow = "rgba(255,255,255,0.08)", "0 8px 32px rgba(0,0,0,0.45)"
-        header_grad = f"linear-gradient(135deg, {c['primary']} 0%, {c['secondary']} 100%)"
+        bg, card, text, muted = "#120e0a", "#1c1610", "#F5E6C8", "#a89080"
+        border = "rgba(255,180,80,0.12)"
+        shadow = "0 12px 40px rgba(0,0,0,0.45)"
+        header_grad = f"linear-gradient(125deg, {o_brown} 0%, #6B3E18 28%, {o_orange} 58%, {o_gold} 88%, #FFE08A 100%)"
+        primary, secondary = o_orange, o_gold
     else:
-        bg, card, text, muted = c["light_bg"], c["light_card"], "#1A1410", "#5C5346"
-        border, shadow = "rgba(0,0,0,0.06)", "0 8px 28px rgba(0,0,0,0.08)"
-        header_grad = f"linear-gradient(135deg, {c['primary']}ee 0%, {c['secondary']}dd 100%)"
-    primary = c["primary"]
-    secondary = c["secondary"]
-    accent = c.get("accent", "#FFFFFF")
+        bg, card, text, muted = o_cream, "#ffffff", o_brown, "#6b5344"
+        border = "rgba(74,42,18,0.08)"
+        shadow = "0 12px 40px rgba(74,42,18,0.08)"
+        header_grad = f"linear-gradient(125deg, {o_brown} 0%, #6B3E18 25%, {o_orange} 55%, {o_gold} 85%, #FFE08A 100%)"
+        primary, secondary = o_orange, o_gold
+    team_accent = team_primary
 
     return f"""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
-    html, body, [data-testid="stAppViewContainer"] {{
-        background-color: {bg} !important;
-        color: {text} !important;
-        font-family: 'Outfit', system-ui, sans-serif !important;
+    @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap');
+
+    :root {{
+      --sosby-bg: {bg};
+      --sosby-card: {card};
+      --sosby-text: {text};
+      --sosby-muted: {muted};
+      --sosby-primary: {primary};
+      --sosby-secondary: {secondary};
+      --sosby-team: {team_accent};
+      --sosby-radius: 16px;
+      --sosby-shadow: {shadow};
     }}
-    .stApp {{ background: {bg} !important; }}
+
+    html, body, .stApp {{
+      background:
+        radial-gradient(1200px 600px at 10% -10%, rgba(255,90,0,0.08), transparent 55%),
+        radial-gradient(900px 500px at 100% 0%, rgba(231,177,0,0.07), transparent 50%),
+        var(--sosby-bg) !important;
+      color: var(--sosby-text) !important;
+      font-family: 'Outfit', system-ui, sans-serif !important;
+    }}
     #MainMenu, footer, header {{ visibility: hidden; }}
-    .owl-banner-logo {{
-        width: 72px;
-        height: 72px;
-        object-fit: contain;
-        border-radius: 14px;
-        box-shadow: 0 4px 14px rgba(0,0,0,0.25);
-        border: 2px solid {secondary};
-        background: {card};
+    .block-container {{
+      padding-top: 1.25rem !important;
+      max-width: 1200px !important;
     }}
+
+    /* Premium banner */
     .sbsby-banner {{
-        background: {header_grad};
-        color: {accent};
-        padding: 1.1rem 1.4rem;
-        border-radius: 16px;
-        text-align: center;
-        margin-bottom: 1rem;
-        box-shadow: {shadow};
-        position: relative;
-        overflow: hidden;
+      background: {header_grad};
+      color: #fff !important;
+      border-radius: 20px;
+      padding: 1.15rem 1.4rem;
+      box-shadow: var(--sosby-shadow), inset 0 1px 0 rgba(255,255,255,0.2);
+      border: 1px solid rgba(255,255,255,0.15);
+      position: relative;
+      overflow: hidden;
+    }}
+    .sbsby-banner::after {{
+      content: '';
+      position: absolute; right: -40px; top: -40px;
+      width: 160px; height: 160px; border-radius: 50%;
+      background: rgba(255,255,255,0.08);
     }}
     .sbsby-banner h1 {{
-        margin: 0;
-        font-size: 1.75rem;
-        font-weight: 800;
-        letter-spacing: 0.04em;
-        text-shadow: 0 2px 8px rgba(0,0,0,0.25);
+      margin: 0;
+      font-size: clamp(1.15rem, 2.5vw, 1.65rem);
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      text-shadow: 0 2px 8px rgba(0,0,0,0.25);
     }}
     .sbsby-banner .subtitle {{
-        margin: 0.3rem 0 0;
-        font-size: 0.9rem;
-        font-weight: 500;
-        opacity: 0.92;
-        letter-spacing: 0.1em;
-        text-transform: uppercase;
+      margin: 0.35rem 0 0;
+      opacity: 0.92;
+      font-weight: 500;
+      font-size: 0.95rem;
     }}
-    .live-dot {{
-        display: inline-block;
-        width: 9px;
-        height: 9px;
-        background: #ef4444;
-        border-radius: 50%;
-        margin-right: 6px;
-        animation: pulse-dot 1.2s ease-in-out infinite;
+
+    /* Cards */
+    .sbsby-card, .score-card, .bb-card, .metric-pill {{
+      background: var(--sosby-card) !important;
+      border-radius: var(--sosby-radius) !important;
+      box-shadow: var(--sosby-shadow) !important;
+      border: 1px solid {border} !important;
+      border-left: 4px solid var(--sosby-primary) !important;
     }}
-    @keyframes pulse-dot {{
-        0%, 100% {{ opacity: 1; transform: scale(1); }}
-        50% {{ opacity: 0.45; transform: scale(0.85); }}
-    }}
-    .sbsby-card {{
-        background: {card};
-        border: 1px solid {border};
-        border-left: 4px solid {primary};
-        border-radius: 14px;
-        padding: 1.1rem 1.2rem;
-        margin-bottom: 0.85rem;
-        box-shadow: {shadow};
-    }}
-    .score-card {{
-        display: grid;
-        grid-template-columns: 1fr auto 1fr;
-        align-items: center;
-        gap: 0.5rem 0.75rem;
-        width: 100%;
-        max-width: 100%;
-        overflow: hidden;
-        box-sizing: border-box;
-    }}
-    .team-block {{
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        min-width: 0;
-        max-width: 100%;
-        overflow: hidden;
-    }}
-    .team-block .logo {{
-        width: 36px;
-        height: 36px;
-        object-fit: contain;
-        margin-bottom: 0.25rem;
-        border-radius: 6px;
-    }}
-    .team-block .name {{
-        font-weight: 600;
-        font-size: 0.82rem;
-        margin-top: 0.2rem;
-        text-align: center;
-        line-height: 1.2;
-        max-width: 100%;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        color: inherit;
-    }}
-    .team-block .score {{
-        font-size: clamp(1.35rem, 4vw, 1.85rem);
-        font-weight: 800;
-        font-family: 'JetBrains Mono', ui-monospace, monospace;
-        color: {primary};
-        line-height: 1.1;
-        letter-spacing: -0.02em;
-        max-width: 100%;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-    }}
-    .score-mid {{
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        min-width: 4.5rem;
-        max-width: 7rem;
-        padding: 0 0.25rem;
-    }}
-    .vs-pill {{
-        background: {primary}22;
-        color: {primary};
-        border: 1px solid {primary}44;
-        border-radius: 999px;
-        padding: 0.25rem 0.65rem;
-        font-weight: 700;
-        font-size: 0.7rem;
-        letter-spacing: 0.06em;
-    }}
-    .status-badge {{
-        display: inline-block;
-        background: {secondary}33;
-        color: {secondary};
-        border-radius: 8px;
-        padding: 0.18rem 0.45rem;
-        font-size: 0.68rem;
-        font-weight: 600;
-        margin-top: 0.35rem;
-        max-width: 100%;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-        text-align: center;
-    }}
-    .status-badge.live {{
-        background: #e11d4833;
-        color: #e11d48;
-        animation: pulse 1.6s ease-in-out infinite;
-    }}
-    @keyframes pulse {{
-        0%, 100% {{ opacity: 1; }}
-        50% {{ opacity: 0.65; }}
-    }}
-    .section-title {{
-        font-size: 1.1rem;
-        font-weight: 700;
-        color: {primary};
-        margin: 1.2rem 0 0.65rem;
-        display: flex;
-        align-items: center;
-        gap: 0.45rem;
-    }}
-    .section-title::before {{
-        content: '';
-        width: 4px;
-        height: 1.1em;
-        background: {secondary};
-        border-radius: 2px;
-    }}
-    .news-meta {{
-        font-size: 0.76rem;
-        color: {muted};
-        margin-top: 0.2rem;
-    }}
+    .sbsby-card {{ padding: 1rem 1.15rem; margin: 0.5rem 0; }}
+    .empty-state {{ opacity: 0.85; text-align: center; padding: 1.5rem; }}
+
     .metric-pill {{
-        background: {primary}12;
-        border: 1px solid {primary}28;
-        border-radius: 12px;
-        padding: 0.5rem 0.85rem;
-        min-width: 90px;
+      padding: 0.85rem 1rem;
+      text-align: center;
     }}
     .metric-pill .label {{
-        font-size: 0.7rem;
-        color: {muted};
-        text-transform: uppercase;
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--sosby-muted);
+      font-weight: 600;
     }}
     .metric-pill .value {{
-        font-size: 1.05rem;
-        font-weight: 700;
-        color: {primary};
-        font-family: 'JetBrains Mono', monospace;
+      font-size: 1.15rem;
+      font-weight: 800;
+      margin-top: 0.2rem;
+      font-family: 'JetBrains Mono', monospace;
     }}
-    .pred-grid {{
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-        gap: 0.65rem;
+
+    /* Score cards */
+    .score-card {{
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 0.75rem;
+      align-items: center;
+      padding: 1rem 1.2rem;
+      margin: 0.65rem 0;
     }}
-    .pred-card {{
-        background: {card};
-        border: 1px solid {border};
-        border-radius: 12px;
-        padding: 0.85rem;
-        text-decoration: none !important;
-        color: {text} !important;
+    .score-card .team-name {{ font-weight: 700; font-size: 0.95rem; }}
+    .score-card .score-num {{
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 700;
+      font-size: 1.45rem;
+      letter-spacing: -0.02em;
+      color: var(--sosby-text);
     }}
-    .pred-card strong {{ color: {primary}; display: block; }}
-    .pred-card span {{ font-size: 0.78rem; color: {muted}; }}
-    .odds-chip {{
-        display: inline-block;
-        background: {primary}14;
-        border: 1px solid {primary}30;
-        border-radius: 8px;
-        padding: 0.22rem 0.5rem;
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 0.78rem;
-        font-weight: 600;
-        margin: 0.12rem 0.2rem;
-        color: {primary};
+    .status-badge {{
+      display: inline-block;
+      padding: 0.2rem 0.55rem;
+      border-radius: 999px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      background: rgba(255,90,0,0.12);
+      color: var(--sosby-primary);
     }}
-    .odds-book {{ font-size: 0.76rem; color: {muted}; margin-top: 0.3rem; }}
-    [data-testid="stSidebar"] {{
-        background: {card} !important;
-        border-right: 1px solid {border};
+    .status-badge.live {{
+      background: #dc2626;
+      color: #fff;
+      animation: pulse 1.4s ease-in-out infinite;
     }}
-    .stButton > button {{
-        background: {primary} !important;
-        color: {accent} !important;
-        border: none !important;
-        border-radius: 10px !important;
-        font-weight: 600 !important;
+    @keyframes pulse {{
+      0%, 100% {{ opacity: 1; }}
+      50% {{ opacity: 0.7; }}
     }}
-    .score-meta {{
-        margin-top: 0.55rem;
-        font-size: 0.68rem;
-        color: {muted};
-        text-align: center;
-        line-height: 1.35;
-        word-break: break-word;
+    .live-dot {{
+      display: inline-block; width: 8px; height: 8px;
+      background: #ef4444; border-radius: 50%;
+      margin-right: 6px;
+      box-shadow: 0 0 0 0 rgba(239,68,68,0.5);
+      animation: ping 1.2s infinite;
     }}
-    .source-badge {{
-        font-size: 0.68rem;
-        color: {muted};
-        font-family: 'JetBrains Mono', monospace;
+    @keyframes ping {{
+      0% {{ box-shadow: 0 0 0 0 rgba(239,68,68,0.45); }}
+      70% {{ box-shadow: 0 0 0 8px rgba(239,68,68,0); }}
+      100% {{ box-shadow: 0 0 0 0 rgba(239,68,68,0); }}
     }}
-    .empty-state {{
-        text-align: center;
-        padding: 1.25rem;
-        color: {muted};
-    }}
+
+    /* Vintage player card */
     .bb-card {{
-        width: 100%;
-        max-width: 320px;
-        margin: 0.5rem auto 1rem;
-        background: linear-gradient(160deg, #f7f0e0 0%, #ebe2cc 55%, #e0d5b8 100%);
-        border: 8px solid {primary};
-        outline: 3px solid {secondary};
-        outline-offset: 2px;
-        border-radius: 6px;
-        box-shadow: 4px 6px 0 rgba(0,0,0,0.25), 0 12px 28px rgba(0,0,0,0.12);
-        padding: 0.65rem 0.75rem 0.85rem;
-        color: #1a1410;
-        font-family: 'Outfit', Georgia, serif;
-        position: relative;
+      max-width: 320px;
+      margin: 0.75rem auto;
+      padding: 0.75rem;
+      background: linear-gradient(160deg, #f7f0e0 0%, #ebe2cc 55%, #e0d4b8 100%) !important;
+      border: 3px solid var(--sosby-team) !important;
+      text-align: center;
     }}
-    .bb-card::before {{
-        content: 'SO!SB!Y! CLASSIC';
-        position: absolute;
-        top: 6px;
-        right: 10px;
-        font-size: 0.55rem;
-        letter-spacing: 0.12em;
-        color: {primary};
-        font-weight: 700;
+    .bb-photo {{ width: 100%; border-radius: 8px; margin-bottom: 0.5rem; }}
+    .bb-name {{ font-weight: 800; font-size: 1.05rem; }}
+    .bb-team {{ font-size: 0.8rem; color: #5c5346; }}
+    .bb-years {{
+      display: inline-block; margin: 0.4rem 0;
+      font-size: 0.7rem; font-weight: 700;
+      padding: 0.15rem 0.5rem; border-radius: 6px;
+      background: rgba(255,90,0,0.15);
     }}
-    .bb-card .bb-photo {{
-        width: 100%;
-        aspect-ratio: 4/5;
-        object-fit: cover;
-        object-position: top;
-        border: 3px solid #3a3020;
-        background: #cfc4a8;
-        display: block;
+    .bb-stats, .bb-anecdote {{ font-size: 0.8rem; margin-top: 0.35rem; }}
+
+    .odds-chip {{
+      display: inline-block;
+      padding: 0.2rem 0.55rem;
+      margin: 0.15rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      background: rgba(255,90,0,0.1);
+      border: 1px solid rgba(255,90,0,0.25);
     }}
-    .bb-card .bb-name {{
-        text-align: center;
-        font-size: 1.15rem;
-        font-weight: 800;
-        margin: 0.45rem 0 0.15rem;
-        color: {primary};
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-    }}
-    .bb-card .bb-team {{
-        text-align: center;
-        font-size: 0.75rem;
-        font-weight: 600;
-        color: #4a4030;
-        margin-bottom: 0.35rem;
-    }}
-    .bb-card .bb-stats {{
-        background: rgba(0,0,0,0.06);
-        border-radius: 4px;
-        padding: 0.4rem 0.5rem;
-        font-size: 0.72rem;
-        line-height: 1.45;
-        margin-top: 0.35rem;
-    }}
-    .bb-card .bb-anecdote {{
-        font-size: 0.7rem;
-        font-style: italic;
-        color: #3a3228;
-        margin-top: 0.4rem;
-        border-top: 1px dashed #9a8c70;
-        padding-top: 0.35rem;
-        line-height: 1.4;
-    }}
-    .bb-card .bb-years {{
-        display: inline-block;
-        background: {secondary};
-        color: #fff;
-        font-size: 0.65rem;
-        font-weight: 700;
-        padding: 0.12rem 0.4rem;
-        border-radius: 3px;
-    }}
-    @media (max-width: 640px) {{
-        .sbsby-banner h1 {{ font-size: 1.2rem !important; }}
-        .team-block .score {{ font-size: 1.25rem !important; }}
-        .score-card {{ gap: 0.35rem; }}
-        .team-block .name {{ font-size: 0.72rem !important; }}
-        .bb-card .bb-photo {{ width: 100%; }}
+    .section-title {{
+      font-size: 1.15rem;
+      font-weight: 800;
+      margin: 0.75rem 0 0.5rem;
+      letter-spacing: 0.01em;
     }}
 
+    /* Streamlit chrome polish */
     .stButton > button {{
-        min-height: 48px !important;
-        padding: 0.55rem 1rem !important;
+      min-height: 44px !important;
+      border-radius: 12px !important;
+      font-weight: 600 !important;
+      border: 1px solid {border} !important;
+      transition: transform 0.12s ease, box-shadow 0.12s ease;
     }}
-    .stSelectbox, .stTextInput, .stSlider {{
-        margin-bottom: 0.35rem;
+    .stButton > button:hover {{
+      transform: translateY(-1px);
+      box-shadow: 0 6px 16px rgba(74,42,18,0.12);
     }}
-    @media (max-width: 768px) {{
-        .sbsby-banner h1 {{ font-size: 1.05rem !important; letter-spacing: 0.02em; }}
-        .sbsby-banner {{ padding: 0.75rem 0.9rem !important; }}
-        .metric-pill .value {{ font-size: 0.95rem !important; }}
-        div[data-testid="stHorizontalBlock"] {{
-            flex-wrap: wrap !important;
-        }}
-        .score-card {{
-            grid-template-columns: 1fr auto 1fr !important;
-        }}
+    .stButton > button[kind="primary"] {{
+      background: linear-gradient(135deg, {primary} 0%, #FF8C29 48%, {secondary} 100%) !important;
+      color: #fff !important;
+      border: none !important;
     }}
+    div[data-testid="stMetric"] {{
+      background: var(--sosby-card);
+      border-radius: 14px;
+      padding: 0.65rem 0.85rem;
+      border: 1px solid {border};
+      box-shadow: var(--sosby-shadow);
+    }}
+    .stTabs [data-baseweb="tab-list"] {{
+      gap: 0.35rem;
+      background: transparent;
+    }}
+    .stTabs [data-baseweb="tab"] {{
+      border-radius: 999px !important;
+      padding: 0.45rem 0.9rem !important;
+      font-weight: 600;
+    }}
+    .stTabs [aria-selected="true"] {{
+      background: rgba(255,90,0,0.12) !important;
+    }}
+    [data-testid="stSidebar"] {{
+      background: linear-gradient(180deg, #FFF8EF 0%, #F5E6C8 100%) !important;
+      border-right: 1px solid {border};
+    }}
+    [data-testid="stSidebar"] .stMarkdown {{ color: {o_brown}; }}
 
+    /* Mobile */
+    @media (max-width: 768px) {{
+      .sbsby-banner h1 {{ font-size: 1.05rem !important; }}
+      .score-card {{
+        grid-template-columns: 1fr auto 1fr !important;
+        padding: 0.85rem !important;
+      }}
+      .score-card .score-num {{ font-size: 1.2rem !important; }}
+      .block-container {{ padding-left: 0.75rem !important; padding-right: 0.75rem !important; }}
+    }}
     </style>
     """
 
@@ -390,20 +260,11 @@ def inject_css(team_key: str, dark: bool) -> None:
     try:
         from .branding import watermark_data_uri
         uri = watermark_data_uri()
-        st.markdown(
-            f"""<style>
-            .stApp::before {{
-                content: '';
-                position: fixed;
-                inset: 0;
-                background: url('{uri}') center center / min(55vw, 420px) no-repeat;
-                opacity: 0.07;
-                pointer-events: none;
-                z-index: 0;
-            }}
-            [data-testid="stAppViewContainer"] > .main {{ position: relative; z-index: 1; }}
-            </style>""",
-            unsafe_allow_html=True,
-        )
+        if uri:
+            st.markdown(
+                f'<div style="position:fixed;bottom:12px;right:12px;opacity:0.07;'
+                f'pointer-events:none;z-index:0"><img src="{uri}" width="120"/></div>',
+                unsafe_allow_html=True,
+            )
     except Exception:
         pass

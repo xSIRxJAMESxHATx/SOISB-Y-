@@ -65,6 +65,96 @@ def _get(url: str, params=None, timeout=7.0):
     return r.json()
 
 
+
+POSITION_TIDBITS = {
+    "QB": "Quarterbacks live and die by the invisible half-second before the rush arrives.",
+    "RB": "Running backs collect scars the highlight reels never show.",
+    "WR": "Separation is a craft — one step early is a career.",
+    "TE": "Tight ends are translators between trench war and open grass.",
+    "OL": "Offensive linemen celebrate by not being noticed.",
+    "DL": "Interior pressure turns good offenses into guesswork.",
+    "LB": "Linebackers diagnose chaos for a living.",
+    "DB": "Secondary players audition for heartbreak on every deep ball.",
+    "CB": "Cornerbacks need short memories and long arms.",
+    "S": "Safeties are the last honest answer to a vertical threat.",
+    "K": "Kickers are one swing from hero or villain — every single week.",
+    "P": "Punters flip field position and rarely get the parade.",
+    "PG": "Point guards run the economy of possessions.",
+    "SG": "Shooting guards stretch the floor or break it.",
+    "SF": "Wings decide whether a defense collapses or holds.",
+    "PF": "Power forwards are hybrid engines — space and force.",
+    "C": "Bigs own the glass and the geometry of help defense.",
+    "G": "Guards set screens that don't show up in box scores — until they do.",
+    "F": "Forwards live between the paint and the logo.",
+    "1B": "First base is the quiet landing pad for half the defense.",
+    "2B": "Turn two or regret it — middle infielders know.",
+    "3B": "The hot corner still earns its name every night.",
+    "SS": "Shortstops see the whole diamond before the ball leaves the bat.",
+    "OF": "Outfielders measure gaps in footsteps and fear.",
+    "LF": "Left field is poetry until a line drive tests your angles.",
+    "CF": "Center fielders cover more real estate than anyone admits.",
+    "RF": "Right field arms change baserunners' ambition.",
+    "SP": "Starting pitchers plan chapters; relievers write endings.",
+    "RP": "Bullpen arms work in short stories with no second drafts.",
+    "GK": "Goalkeepers make the spectacular look inevitable — or the reverse.",
+    "FW": "Forwards finish chances others only imagine.",
+    "MF": "Midfielders are the heartbeat you only notice when it stops.",
+    "DF": "Defenders erase danger for a living.",
+    "LW": "Wingers stretch defenses until they tear.",
+    "RW": "Opposite wing, same pressure — create or disappear.",
+    "D": "Hockey defenders kill plays and start the next one.",
+}
+
+TEAM_TIDBITS = {
+    "browns": "Cleveland football is a long story — every chapter still draws a crowd.",
+    "guardians": "Lake air and late innings are a Progressive Field specialty.",
+    "cavaliers": "Wine and gold still means belief when June rolls around.",
+    "osu_football": "Saturday in the Shoe is a civic religion in scarlet.",
+    "osu_mbb": "Buckeye hoops runs on tough minutes and louder student sections.",
+    "crew": "Black and gold nights in Columbus feel like a soccer city that never left.",
+    "bluejackets": "Nationwide Arena volume is a weapon the Jackets lease every winter.",
+    "usmnt": "USMNT moments hitch the whole country to ninety minutes.",
+    "usab": "USA Basketball gold is the expectation — and the weight.",
+}
+
+
+def player_tidbit(name: str, position: str = "", team_key: str = "") -> str:
+    """Always return a human fact / fun line for a card."""
+    meta = PLAYER_LORE.get(name) or {}
+    if meta.get("anecdote"):
+        return str(meta["anecdote"])
+    # case-insensitive lore lookup
+    for k, v in PLAYER_LORE.items():
+        if k.lower() == (name or "").lower() and v.get("anecdote"):
+            return str(v["anecdote"])
+    pos = (position or "").upper().strip()
+    for key in (pos, pos.split("/")[0].strip(), pos.split("-")[0].strip(), pos.split(" ")[0].strip()):
+        if key in POSITION_TIDBITS:
+            return POSITION_TIDBITS[key]
+    for k, v in POSITION_TIDBITS.items():
+        if k and k in pos:
+            return v
+    if team_key in TEAM_TIDBITS:
+        return TEAM_TIDBITS[team_key]
+    if name:
+        return f"{name} left footprints in the box score — the fun is remembering how."
+    return "Every roster has a story; this one is still being written."
+
+
+    if not isinstance(card, dict):
+        return card
+    if not (card.get("anecdote") or "").strip():
+        tk = ""
+        if team_cfg:
+            tk = str(team_cfg.get("key") or "")
+        card["anecdote"] = player_tidbit(player_name, card.get("position") or "", tk)
+    if not card.get("best_years"):
+        lore = PLAYER_LORE.get(player_name) or {}
+        if lore.get("best_years"):
+            card["best_years"] = lore["best_years"]
+    return card
+
+
 def get_roster(team_cfg: dict) -> Tuple[List[dict], str]:
     """5-source roster attempt."""
     key = f"roster:{team_cfg.get('espn_id')}:{team_cfg.get('espn_path')}"
@@ -195,6 +285,7 @@ def get_player_card(player_name: str, team_cfg: dict) -> Tuple[dict, str]:
                 "team": pick.get("strTeam") or card["team"],
             })
             card["source"] = "thesportsdb"
+            card = enrich_card_anecdote(card, player_name, team_cfg)
             return card, "thesportsdb"
         sources_tried.append("thesportsdb-empty")
     except Exception as e:
@@ -206,13 +297,15 @@ def get_player_card(player_name: str, team_cfg: dict) -> Tuple[dict, str]:
         if g["player"].lower() == player_name.lower():
             card["description"] = f"{g.get('why', '')} · Era: {g.get('era', '')} · {g.get('titles', '')}"
             card["source"] = "curated-greats"
+            card = enrich_card_anecdote(card, player_name, team_cfg)
             return card, "curated-greats"
     for cat, entries in ALL_TIME_LEADERS.get(team_cfg.get("key", ""), {}).items():
         for e in entries:
             if e["player"].lower() == player_name.lower():
                 card["description"] = f"All-time {cat}: {e.get('value')} ({e.get('note') or 'franchise leaderboard'})"
                 card["source"] = "curated-leaders"
-                return card, "curated-leaders"
+            card = enrich_card_anecdote(card, player_name, team_cfg)
+            return card, "curated-leaders"
 
     # 3 Wikipedia summary API (no key)
     try:
@@ -227,6 +320,7 @@ def get_player_card(player_name: str, team_cfg: dict) -> Tuple[dict, str]:
             if thumb:
                 card["thumb"] = thumb
             card["source"] = "wikipedia"
+            card = enrich_card_anecdote(card, player_name, team_cfg)
             return card, "wikipedia"
         sources_tried.append("wiki-empty")
     except Exception as e:
@@ -236,6 +330,7 @@ def get_player_card(player_name: str, team_cfg: dict) -> Tuple[dict, str]:
     card["thumb"] = f"https://ui-avatars.com/api/?name={player_name.replace(' ', '+')}&size=256&background=311D00&color=fff"
     card["description"] = card["description"] or f"{player_name} — select another source or check season roster."
     card["source"] = "avatar-fallback"
+    card = enrich_card_anecdote(card, player_name, team_cfg)
     return card, "avatar-fallback"
 
 

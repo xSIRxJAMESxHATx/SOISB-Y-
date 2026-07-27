@@ -32,7 +32,10 @@ header_bar(team, flavor, live)
 st.markdown(f"**{flavor.get('slogan','')}** — _{flavor.get('witty','')}_")
 
 # Working Jump — real multipage links
+st.markdown("### What do you want to do?")
+st.caption("Pick a destination — everything stays one click from Home.")
 st.markdown("### Jump")
+
 j1, j2, j3, j4, j5 = st.columns(5)
 with j1:
     st.page_link("pages/1_Game_Day.py", label="Game Day", icon="🏈")
@@ -84,7 +87,9 @@ with m4:
         st.write(team.get("short"))
 src_note(isrc)
 
+st.info("Odds for the Betting Lab: get a **free key** at [the-odds-api.com](https://the-odds-api.com/) → paste in sidebar **Settings / API**.")
 st.markdown("#### Live / latest scores")
+
 try:
     games, src = cached_scoreboard(team_key)
     if not games:

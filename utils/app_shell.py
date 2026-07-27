@@ -1,25 +1,30 @@
-"""Shared multipage shell: top nav, sidebar, theme, offline banner."""
+"""Shared multipage shell: top nav, sidebar, theme, offline, league catalog."""
 from __future__ import annotations
 import os
 from datetime import datetime, timezone
 
 import streamlit as st
 
-from utils.api_client import TEAMS, get_client
+from utils.api_client import TEAMS, get_client, register_team, resolve_team
 from utils.theme import inject_css
 from utils.team_flavor import get_flavor
 from utils.community import AVATAR_PRESETS, avatar_url
 from utils.offline_mode import show_offline_banner
-from utils.nav_state import remember_page, last_page
+from utils.nav_state import last_page
 from utils.client_store import inject_client_store
+from utils.session_mgr import ensure_defaults, get_active_team_cfg, set_core_team, set_ephemeral_team
+from utils.league_catalog import search_catalog, catalog_to_team_cfg
+from utils.team_search import search_teams
+from utils.custom_sidebar import render_drawer
 
-# Quick-pick teams for Ohio / CLE fans
 QUICK_TEAMS = [
     ("browns", "Browns"),
     ("guardians", "Guardians"),
     ("cavaliers", "Cavs"),
     ("osu_football", "OSU FB"),
     ("osu_mbb", "OSU MBB"),
+    ("crew", "Crew"),
+    ("bluejackets", "CBJ"),
 ]
 
 
@@ -37,102 +42,112 @@ def bootstrap_secrets() -> None:
             pass
 
 
-def init_state() -> None:
-    defaults = {
-        "team_key": "browns",
-        "dark_mode": False,
-        "auto_refresh": True,
-        "refresh_sec": 45,
-        "odds_key_input": "",
-        "selected_player": None,
-        "show_sources": False,
-        "username": "Fan",
-        "avatar_preset": "initials",
-        "offline_mode": False,
-    }
-    for k, v in defaults.items():
-        if k not in st.session_state:
-            st.session_state[k] = v
-
-
 def render_top_nav() -> None:
-    """Always-visible nav: Home + sections + quick teams (works without sidebar)."""
-    st.markdown(
-        """
-        <style>
-        div[data-testid="stHorizontalBlock"] button { min-height: 42px !important; }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.markdown("##### ☰ Navigate")
-    r1 = st.columns([1.1, 1.1, 1.1, 1.1, 1.1, 1.1])
-    with r1[0]:
-        st.page_link("app.py", label="Home", icon="🏠")
-    with r1[1]:
-        st.page_link("pages/1_Game_Day.py", label="Game Day", icon="🏈")
-    with r1[2]:
-        st.page_link("pages/2_Analytics.py", label="Analytics", icon="📊")
-    with r1[3]:
-        st.page_link("pages/3_Betting_Lab.py", label="Betting Lab", icon="🧪")
-    with r1[4]:
-        st.page_link("pages/4_Fan_Zone.py", label="Fan Zone", icon="🦉")
-    with r1[5]:
-        st.page_link("pages/5_Alerts.py", label="Alerts", icon="🔔")
+    st.markdown("##### Navigate")
+    r1 = st.columns(6)
+    links = [
+        ("app.py", "Home"),
+        ("pages/1_Game_Day.py", "Game Day"),
+        ("pages/2_Analytics.py", "Analytics"),
+        ("pages/3_Betting_Lab.py", "Betting Lab"),
+        ("pages/4_Fan_Zone.py", "Fan Zone"),
+        ("pages/5_Alerts.py", "Alerts"),
+    ]
+    for col, (path, label) in zip(r1, links):
+        with col:
+            st.page_link(path, label=label)
 
     st.markdown("**Quick teams**")
     qcols = st.columns(len(QUICK_TEAMS))
     for i, (key, label) in enumerate(QUICK_TEAMS):
         with qcols[i]:
-            if st.button(label, key=f"qt_{key}_{st.session_state.get('last_page','home')}", use_container_width=True):
-                st.session_state.team_key = key
+            if st.button(label, key=f"qt_{key}", use_container_width=True):
+                set_core_team(key)
                 st.rerun()
+
+    with st.expander("Search league teams (NFL/MLB/NBA/NHL/MLS/NCAA)", expanded=False):
+        st.caption("Core pages stay the same — any league team can be loaded for scores & lab sims.")
+        q = st.text_input("Search team name", key="cat_q", placeholder="e.g. Penguins, Galaxy, Wolverines")
+        if q and len(q) >= 2:
+            try:
+                hits = search_catalog(q, limit=25)
+            except Exception as e:
+                st.warning(f"Catalog unavailable: {e}")
+                hits = []
+            if not hits:
+                st.caption("No matches (or API lag). Try core team search below.")
+            else:
+                labels = [f"{h.get('name')} · {h.get('league_key')}" for h in hits]
+                pick = st.selectbox("Matches", labels, key="cat_pick")
+                if st.button("Load team", key="cat_go"):
+                    row = hits[labels.index(pick)]
+                    cfg = catalog_to_team_cfg(row)
+                    key = f"ext_{cfg['espn_id']}"
+                    register_team(key, cfg)
+                    set_ephemeral_team(cfg)
+                    st.success(f"Loaded {cfg['name']}")
+                    st.rerun()
+
+    with st.expander("Core roster search", expanded=False):
+        q2 = st.text_input("Core teams only", key="core_q")
+        hits2 = search_teams(q2) if q2 else []
+        if hits2:
+            lab2 = [h[1] for h in hits2]
+            p2 = st.selectbox("Core results", lab2, key="core_pick")
+            if st.button("Go core team", key="core_go"):
+                for k, lab in hits2:
+                    if lab == p2:
+                        set_core_team(k)
+                        st.rerun()
+                        break
     st.divider()
 
 
-def render_sidebar() -> str:
-    # Keep sidebar useful; start expanded so it is active after page switches
+def render_sidebar() -> None:
     with st.sidebar:
-        st.markdown("## 🦉 SO!SB!Y!")
         try:
-            st.image("assets/favicon.png", width=52)
+            st.image("assets/superb_owl_icon.png", width=88)
         except Exception:
-            st.write("🦉")
-        st.caption("Sidebar stays available on every page · use ☰ top-right if collapsed")
+            st.write("OWL")
+        st.markdown("## SO!SB!Y!")
+        st.caption("Sidebar active on every page")
 
-        st.page_link("app.py", label="🏠 Home")
-        st.page_link("pages/1_Game_Day.py", label="🏈 Game Day")
-        st.page_link("pages/2_Analytics.py", label="📊 Analytics")
-        st.page_link("pages/3_Betting_Lab.py", label="🧪 Betting Lab")
-        st.page_link("pages/4_Fan_Zone.py", label="🦉 Fan Zone")
-        st.page_link("pages/5_Alerts.py", label="🔔 Alerts")
+        st.page_link("app.py", label="Home")
+        st.page_link("pages/1_Game_Day.py", label="Game Day")
+        st.page_link("pages/2_Analytics.py", label="Analytics")
+        st.page_link("pages/3_Betting_Lab.py", label="Betting Lab")
+        st.page_link("pages/4_Fan_Zone.py", label="Fan Zone")
+        st.page_link("pages/5_Alerts.py", label="Alerts")
 
         st.divider()
+        st.markdown("**Main teams**")
         team_options = {v["short"]: k for k, v in TEAMS.items()}
         labels = list(team_options.keys())
+        # index from current core key if possible
+        cur = st.session_state.get("team_key") or "browns"
         try:
-            idx = list(team_options.values()).index(st.session_state.team_key)
+            if not str(cur).startswith("ext_"):
+                idx = list(team_options.values()).index(cur)
+            else:
+                idx = 0
         except ValueError:
             idx = 0
-        sel = st.selectbox("🏈 All teams", labels, index=idx, key="sidebar_team_all")
-        st.session_state.team_key = team_options[sel]
+        sel = st.selectbox("Core list", labels, index=idx, key="sidebar_core")
+        if st.button("Apply core team", key="sb_apply"):
+            set_core_team(team_options[sel])
+            st.rerun()
 
-        st.markdown("**CLE / Ohio**")
         for key, label in QUICK_TEAMS:
             if st.button(label, key=f"sb_qt_{key}", use_container_width=True):
-                st.session_state.team_key = key
+                set_core_team(key)
                 st.rerun()
 
-        st.session_state.dark_mode = st.toggle("🌙 Dark", st.session_state.dark_mode, key="sb_dark")
-        st.session_state.auto_refresh = st.toggle("🔄 Auto-refresh", st.session_state.auto_refresh, key="sb_auto")
+        st.session_state.dark_mode = st.toggle("Dark", st.session_state.dark_mode, key="sb_dark")
+        st.session_state.auto_refresh = st.toggle("Auto-refresh", st.session_state.auto_refresh, key="sb_auto")
         st.session_state.refresh_sec = st.slider("Refresh sec", 30, 90, st.session_state.refresh_sec, 5, key="sb_ref")
-        st.session_state.offline_mode = st.toggle(
-            "📦 Prefer cached / offline",
-            st.session_state.get("offline_mode", False),
-            key="sb_off",
-        )
+        st.session_state.offline_mode = st.toggle("Prefer cached / offline", st.session_state.offline_mode, key="sb_off")
 
-        with st.expander("👤 Profile"):
+        with st.expander("Profile"):
             st.session_state.username = st.text_input("Username", st.session_state.username, max_chars=40, key="sb_user")
             opts = ["initials"] + list(AVATAR_PRESETS)
             try:
@@ -140,33 +155,36 @@ def render_sidebar() -> str:
             except ValueError:
                 ai = 0
             st.session_state.avatar_preset = st.selectbox("Avatar", opts, index=ai, key="sb_av")
-            try:
-                st.image(avatar_url(st.session_state.username, st.session_state.avatar_preset), width=56)
-            except Exception:
-                pass
 
-        with st.expander("⚙️ Settings / API"):
+        with st.expander("Settings / API"):
+            st.markdown("[Free Odds API key](https://the-odds-api.com/)")
             st.session_state.odds_key_input = st.text_input(
                 "Odds API key", value=st.session_state.odds_key_input, type="password", key="sb_odds",
             )
             st.session_state.show_sources = st.toggle("Show sources", st.session_state.show_sources, key="sb_src")
 
-        st.caption("Read-only · Educational betting lab")
-    return st.session_state.team_key
+        st.caption("Educational lab · read-only shell")
 
 
 def page_setup(title: str = "SO!SB!Y!") -> tuple:
+    bootstrap_secrets()
+    ensure_defaults()
     st.set_page_config(
         page_title=title,
         page_icon="assets/favicon.png",
         layout="wide",
-        initial_sidebar_state="expanded",  # active after page switches
+        initial_sidebar_state="expanded",
     )
-    bootstrap_secrets()
-    init_state()
-    team_key = render_sidebar()
-    inject_css(team_key, st.session_state.dark_mode)
-    render_top_nav()  # hamburger-style always-on nav
+    try:
+        render_drawer(open_default=False)
+    except Exception:
+        pass
+    render_sidebar()
+    team_key, team = get_active_team_cfg(TEAMS)
+    if team_key.startswith("ext_") and team:
+        register_team(team_key, team)
+    inject_css("browns" if team_key.startswith("ext_") else (team_key if team_key in TEAMS else "browns"), st.session_state.dark_mode)
+    render_top_nav()
     show_offline_banner()
     try:
         inject_client_store(team_key, last_page())
@@ -179,8 +197,14 @@ def page_setup(title: str = "SO!SB!Y!") -> tuple:
             client.set_odds_key(odds)
         except Exception:
             pass
-    team = TEAMS.get(team_key) or TEAMS["browns"]
-    flavor = get_flavor(team_key)
+    flavor = get_flavor(team_key if team_key in TEAMS else "browns")
+    if team.get("ephemeral"):
+        flavor = {
+            **flavor,
+            "slogan": team.get("name"),
+            "witty": "League catalog team · same feeds when ESPN allows",
+            "phrases": [team.get("short") or "", team.get("league") or ""],
+        }
     return team_key, team, client, flavor
 
 
@@ -191,10 +215,10 @@ def src_note(s: str) -> None:
 
 def header_bar(team: dict, flavor: dict, live: bool = False) -> None:
     live_h = "LIVE" if live else (flavor.get("icon") or "OWL")
-    c1, c2, c3 = st.columns([1, 3.5, 1.2])
+    c1, c2, c3 = st.columns([1.1, 3.4, 1.2])
     with c1:
         try:
-            st.image("assets/superb_owl_icon.png", width=80)
+            st.image("assets/superb_owl_icon.png", width=120)
         except Exception:
             st.write("OWL")
     with c2:
