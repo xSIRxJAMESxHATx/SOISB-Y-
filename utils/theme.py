@@ -31,6 +31,15 @@ def build_css(team_key: str, dark: bool = False) -> str:
     }}
     .stApp {{ background: {bg} !important; }}
     #MainMenu, footer, header {{ visibility: hidden; }}
+    .owl-banner-logo {{
+        width: 72px;
+        height: 72px;
+        object-fit: contain;
+        border-radius: 14px;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+        border: 2px solid {secondary};
+        background: {card};
+    }}
     .sbsby-banner {{
         background: {header_grad};
         color: {accent};
@@ -351,6 +360,26 @@ def build_css(team_key: str, dark: bool = False) -> str:
         .team-block .name {{ font-size: 0.72rem !important; }}
         .bb-card .bb-photo {{ width: 100%; }}
     }}
+
+    .stButton > button {{
+        min-height: 48px !important;
+        padding: 0.55rem 1rem !important;
+    }}
+    .stSelectbox, .stTextInput, .stSlider {{
+        margin-bottom: 0.35rem;
+    }}
+    @media (max-width: 768px) {{
+        .sbsby-banner h1 {{ font-size: 1.05rem !important; letter-spacing: 0.02em; }}
+        .sbsby-banner {{ padding: 0.75rem 0.9rem !important; }}
+        .metric-pill .value {{ font-size: 0.95rem !important; }}
+        div[data-testid="stHorizontalBlock"] {{
+            flex-wrap: wrap !important;
+        }}
+        .score-card {{
+            grid-template-columns: 1fr auto 1fr !important;
+        }}
+    }}
+
     </style>
     """
 

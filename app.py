@@ -51,13 +51,14 @@ from utils.scorecard import render_score_card, format_score_pair, format_score
 from utils.ws_feeds import probe_websocket, sports_ws_candidates, get_owner_ws, merge_ws_payload_into_games, live_score_tick
 from utils.viz3d import form_3d_scatter, poisson_surface
 from utils.errors import safe_call, format_feed_status
+from utils.error_handler import ui_error, log_exception
 from utils.bayes_poisson import (
     gamma_poisson_update, empirical_bayes_rates,
     hierarchical_match_preview, rates_from_form_games,
 )
 
 
-st.set_page_config(page_title="SO!SB!Y!", page_icon="🦉", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="SO!SB!Y!", page_icon="assets/favicon.png", layout="wide", initial_sidebar_state="expanded")
 
 # Inject Twilio + mod secrets into env for helper modules
 for key in ("TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM_NUMBER", "MOD_PASSWORD", "ODDS_API_KEY", "SUPABASE_URL", "SUPABASE_KEY", "SUPABASE_ANON_KEY"):
@@ -81,10 +82,13 @@ for k, v in {
 with st.sidebar:
     st.markdown("## 🦉 SO!SB!Y!")
     try:
-        st.image("assets/superb_owl_icon.png", width=72)
+        st.image("assets/favicon.png", width=64)
     except Exception:
-        pass
-    st.caption("☰ menu on mobile · team switcher · Superb Owl")
+        try:
+            st.image("assets/superb_owl_icon.png", width=72)
+        except Exception:
+            pass
+    st.caption("☰ hamburger (top-right Streamlit menu) · team switcher always here")
     team_options = {v["short"]: k for k, v in TEAMS.items()}
     labels = list(team_options.keys())
     try:
@@ -94,25 +98,28 @@ with st.sidebar:
     sel = st.selectbox("🏈 Team", labels, index=idx)
     st.session_state.team_key = team_options[sel]
     st.session_state.dark_mode = st.toggle("🌙 Dark Mode", st.session_state.dark_mode)
-    st.session_state.auto_refresh = st.toggle("🔄 Auto-update (~45s)", st.session_state.auto_refresh)
-    st.session_state.refresh_sec = st.slider("Refresh seconds", 30, 90, st.session_state.refresh_sec, 5)
+    st.session_state.auto_refresh = st.toggle("🔄 Auto-update", st.session_state.auto_refresh)
+    st.session_state.refresh_sec = st.slider("Refresh (sec)", 30, 90, st.session_state.refresh_sec, 5)
     st.divider()
-    st.markdown("### Profile")
-    st.session_state.username = st.text_input("Username", st.session_state.username, max_chars=40)
-    st.session_state.avatar_preset = st.selectbox(
-        "Avatar theme", ["initials"] + AVATAR_PRESETS,
-        index=(["initials"] + AVATAR_PRESETS).index(st.session_state.avatar_preset)
-        if st.session_state.avatar_preset in (["initials"] + AVATAR_PRESETS) else 0,
-    )
-    st.image(avatar_url(st.session_state.username, st.session_state.avatar_preset), width=64)
-    st.divider()
-    st.markdown("### 🔑 Odds API")
-    st.session_state.odds_key_input = st.text_input(
-        "The Odds API key", value=st.session_state.odds_key_input, type="password",
-        placeholder="the-odds-api.com",
-    )
-    st.session_state.show_sources = st.toggle("Show data sources", st.session_state.show_sources)
-    st.caption("Public users: navigate & post in Community only. App code is read-only.")
+    with st.expander("👤 Profile", expanded=False):
+        st.session_state.username = st.text_input("Username", st.session_state.username, max_chars=40)
+        st.session_state.avatar_preset = st.selectbox(
+            "Avatar", ["initials"] + AVATAR_PRESETS,
+            index=(["initials"] + AVATAR_PRESETS).index(st.session_state.avatar_preset)
+            if st.session_state.avatar_preset in (["initials"] + AVATAR_PRESETS) else 0,
+        )
+        try:
+            st.image(avatar_url(st.session_state.username, st.session_state.avatar_preset), width=64)
+        except Exception:
+            pass
+    with st.expander("⚙️ Settings / API keys", expanded=False):
+        st.session_state.odds_key_input = st.text_input(
+            "The Odds API key", value=st.session_state.odds_key_input, type="password",
+            placeholder="the-odds-api.com",
+        )
+        st.session_state.show_sources = st.toggle("Show data sources", st.session_state.show_sources)
+        st.caption("Or set ODDS_API_KEY in Streamlit Secrets.")
+    st.caption("Read-only shell · post in Community only")
 
 team_key = st.session_state.team_key
 inject_css(team_key, st.session_state.dark_mode)
@@ -256,6 +263,22 @@ if info.get("logo"):
             st.caption("Secondary / badge")
     except Exception:
         pass
+
+st.markdown("##### Jump")
+_jump = st.radio(
+    "Section",
+    ["🏈 Game Day", "📊 Analytics", "💰 Betting", "🦉 Fan Zone", "🔔 Alerts"],
+    horizontal=True,
+    label_visibility="collapsed",
+    key="nav_section",
+)
+st.caption({
+    "🏈 Game Day": "→ Scores+Weather · Schedule · News · Watch",
+    "📊 Analytics": "→ Standings · Trends · Leaders · Greats · Players",
+    "💰 Betting": "→ Betting HQ · Sandbox · Odds · Journal · Markets",
+    "🦉 Fan Zone": "→ Community · Desk Bot · Moments · Tickets · Rushmore",
+    "🔔 Alerts": "→ Alerts / SMS",
+}.get(_jump, ""))
 
 tabs = st.tabs([
     "🏈 Scores + Weather", "🎰 Betting HQ", "🧪 Sandbox", "💰 Odds",
